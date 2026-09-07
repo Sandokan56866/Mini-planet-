@@ -193,7 +193,7 @@ export function initTerrain() {
     flatShading: true
   });
   var planetMesh = new THREE.Mesh(planetNonIndexed, planetMat);
-  planetMesh.castShadow = true;
+  planetMesh.castShadow = false;
   planetMesh.receiveShadow = true;
   state.planetGroup.add(planetMesh);
   state.terrainMesh = planetMesh;

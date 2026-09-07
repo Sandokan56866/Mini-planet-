@@ -11,7 +11,7 @@ export const SEA_LEVEL = 0.32;
 export const STEP_HEIGHT = 0.28;
 export const TOTAL_STEPS = 7;
 export const DEBUG = false;
-export const DEBUG_RESET = true;
+export const DEBUG_RESET = false;
 
 export const ELEV_FREQ = 0.83;
 export const ELEV_OFFSET_X = 14.2;
@@ -1139,6 +1139,7 @@ export const WEAPONS_CONFIG = {
     color: 0xe2e8f0
   }
 };
+export const WEAPONS = WEAPONS_CONFIG;
 
 // ==========================================
 // 11. PROGRESSÃO E ONDAS
@@ -1197,7 +1198,7 @@ export const JOYSTICK_MAX_RADIUS = 42;
 export const INVERT_MOVE_X = false;
 export const INVERT_MOVE_Y = false;
 export const DEBUG_FACING = false;
-export const DEBUG_ANCHOR = true;
+export const DEBUG_ANCHOR = false;
 
 // ==========================================
 // 13. HUD E ANÉIS CIRCULARES

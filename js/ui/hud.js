@@ -1,7 +1,7 @@
 // O que faz: Gerencia a interface do jogo: anéis circulares de Vida e Stamina, pílula compacta de progresso,
 // tela de início com botão JOGAR, tela de árvore de habilidades permanente, botão de mudo e tela de fim de jogo com fragmentos.
 // Exporta: initHUD, updateHUD, updateHpUI, updateStaminaUI, updateXpUI, updateKillsUI, updateWaveUI, updateWaveProgressUI,
-// showBigAnnouncement, triggerDamageFlash, showStartScreen, hideStartScreen, showSkillTreeModal, hideSkillTreeModal, updateMuteButtonUI.
+// showBigAnnouncement, triggerDamageFlash, showStartScreen, hideStartScreen, showSkillTreeModal, hideSkillTreeModal, updateMuteButtonUI, updateBiomeUI.
 // Depende de: js/config.js, js/state.js, js/systems/audio.js, js/systems/meta.js
 
 import {
@@ -38,6 +38,7 @@ var pillWaveEl = null;
 var pillKillsEl = null;
 var pillLevelEl = null;
 var pillXpEl = null;
+var biomeDisplayEl = null;
 var fpsCounterEl = null;
 var audioMuteBtnEl = null;
 
@@ -487,6 +488,10 @@ export function initHUD() {
   if (topBar) {
     topBar.innerHTML = "";
 
+    // Linha Principal Superior: Anéis de status na esquerda e Estatísticas/Som na direita
+    var mainRow = document.createElement("div");
+    mainRow.className = "top-bar-main-row";
+
     var ringsGroup = document.createElement("div");
     ringsGroup.className = "rings-group";
     ringsGroup.id = "rings-group";
@@ -522,39 +527,9 @@ export function initHUD() {
         '</svg>' +
       '</div>';
     ringsGroup.appendChild(staminaWrap);
+    mainRow.appendChild(ringsGroup);
 
-    topBar.appendChild(ringsGroup);
-
-    // Grupo Direita
-    var topRightGroup = document.createElement("div");
-    topRightGroup.className = "top-right-group";
-    topRightGroup.id = "top-right-group";
-
-    // Armas e Minas
-    var weaponsContainer = document.createElement("div");
-    weaponsContainer.className = "weapons-hud-container";
-    weaponsContainer.id = "weapons-hud-container";
-
-    var weaponPill = document.createElement("div");
-    weaponPill.className = "weapon-pill";
-    weaponPill.id = "weapon-hud-pill";
-    weaponPill.innerHTML =
-      '<span class="weapon-icon" id="weapon-icon">🔫</span>' +
-      '<span class="weapon-name" id="weapon-name">Pistola</span>' +
-      '<span class="weapon-ammo-badge infinite" id="weapon-ammo">∞</span>';
-    weaponsContainer.appendChild(weaponPill);
-
-    var devicePill = document.createElement("div");
-    devicePill.className = "device-pill";
-    devicePill.id = "device-hud-pill";
-    devicePill.innerHTML =
-      '<span class="device-icon">💣</span>' +
-      '<span class="device-count" id="device-count">0</span>';
-    weaponsContainer.appendChild(devicePill);
-
-    topRightGroup.appendChild(weaponsContainer);
-
-    // Estatísticas Compactas
+    // Estatísticas Compactas e Áudio
     var statsCompactContainer = document.createElement("div");
     statsCompactContainer.className = "stats-compact-container";
 
@@ -568,7 +543,9 @@ export function initHUD() {
       '<span class="pill-dot">•</span>' +
       '<span class="pill-item" id="pill-level">N1</span>' +
       '<span class="pill-dot">•</span>' +
-      '<span class="pill-item" id="pill-xp">0/120</span>';
+      '<span class="pill-item" id="pill-xp">0/120</span>' +
+      '<span class="pill-dot">•</span>' +
+      '<span class="pill-item" id="biome-display" style="color: #e2e8f0;">🏙️ Subúrbio</span>';
     statsCompactContainer.appendChild(compactPill);
 
     var fpsEl = document.createElement("div");
@@ -590,8 +567,36 @@ export function initHUD() {
     });
     statsCompactContainer.appendChild(muteBtn);
 
-    topRightGroup.appendChild(statsCompactContainer);
-    topBar.appendChild(topRightGroup);
+    mainRow.appendChild(statsCompactContainer);
+    topBar.appendChild(mainRow);
+
+    // Sub-linha: Armas e Minas (abaixo dos anéis, alinhado à esquerda)
+    var subRow = document.createElement("div");
+    subRow.className = "top-bar-sub-row";
+
+    var weaponsContainer = document.createElement("div");
+    weaponsContainer.className = "weapons-hud-container";
+    weaponsContainer.id = "weapons-hud-container";
+
+    var weaponPill = document.createElement("div");
+    weaponPill.className = "weapon-pill";
+    weaponPill.id = "weapon-hud-pill";
+    weaponPill.innerHTML =
+      '<span class="weapon-icon" id="weapon-icon">🔫</span>' +
+      '<span class="weapon-name" id="weapon-name">Pistola</span>' +
+      '<span class="weapon-ammo-badge infinite" id="weapon-ammo">∞</span>';
+    weaponsContainer.appendChild(weaponPill);
+
+    var devicePill = document.createElement("div");
+    devicePill.className = "device-pill";
+    devicePill.id = "device-hud-pill";
+    devicePill.innerHTML =
+      '<span class="device-icon">💣</span>' +
+      '<span class="device-count" id="device-count">0</span>';
+    weaponsContainer.appendChild(devicePill);
+
+    subRow.appendChild(weaponsContainer);
+    topBar.appendChild(subRow);
   }
 
   // Captura referências aos elementos criados
@@ -605,6 +610,7 @@ export function initHUD() {
   pillKillsEl = document.getElementById("pill-kills");
   pillLevelEl = document.getElementById("pill-level");
   pillXpEl = document.getElementById("pill-xp");
+  biomeDisplayEl = document.getElementById("biome-display");
   fpsCounterEl = document.getElementById("fps-counter");
   audioMuteBtnEl = document.getElementById("audio-mute-btn");
 
@@ -788,6 +794,7 @@ export function initHUD() {
   state.ui.hideSkillTreeModal = hideSkillTreeModal;
   state.ui.updateBombsUI = updateBombsUI;
   state.ui.updateDroneUI = updateDroneUI;
+  state.ui.updateBiomeUI = updateBiomeUI;
 
   updateHpUI();
   updateStaminaUI();
@@ -836,3 +843,19 @@ export function updateHUD(dt) {
   state.currentLookTarget.lerp(state.desiredLookTarget, CAM_LERP_FACTOR);
   state.camera.lookAt(state.currentLookTarget);
 }
+
+// ==========================================
+// 12. ATUALIZAÇÃO DO BIOMA NO HUD
+// ==========================================
+export function updateBiomeUI(icon, name, color) {
+  if (!biomeDisplayEl) {
+    biomeDisplayEl = document.getElementById("biome-display");
+  }
+  if (biomeDisplayEl) {
+    biomeDisplayEl.textContent = (icon ? icon + " " : "") + (name || "");
+    if (color) {
+      biomeDisplayEl.style.color = color;
+    }
+  }
+}
+

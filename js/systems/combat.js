@@ -45,7 +45,8 @@ import {
   PICKUP_MAGNET_RAD,
   MEDKIT_HEAL_AMOUNT,
   BOMB_BOSS_DAMAGE,
-  WEAPONS_CONFIG
+  WEAPONS_CONFIG,
+  WEAPONS
 } from "../config.js";
 import { state } from "../state.js";
 import { radiusAt } from "../core/math.js";
@@ -56,6 +57,9 @@ var tempAimVec = new THREE.Vector3();
 var tempAimTargetPos = new THREE.Vector3();
 var tempProjVec = new THREE.Vector3();
 var tempDeathWorldPos = new THREE.Vector3();
+
+// Acumulador de tempo de combate para cooldowns de efeitos e armas
+var combatTime = 0;
 
 // ==========================================
 // 1. SÍNTESE DE ÁUDIO PROCEDURAL (WEB AUDIO)
@@ -451,27 +455,8 @@ function playZombieHitPlayerSound() {
 var damageContainer = null;
 
 export function showDamagePopup(worldPos, damageText, isCrit) {
-  if (!damageContainer || !state.camera) return;
-  tempProjVec.copy(worldPos);
-  tempProjVec.project(state.camera);
-
-  var halfW = window.innerWidth / 2;
-  var halfH = window.innerHeight / 2;
-  var sx = tempProjVec.x * halfW + halfW;
-  var sy = -(tempProjVec.y * halfH) + halfH;
-
-  if (tempProjVec.z > 1 || sx < 0 || sx > window.innerWidth || sy < 0 || sy > window.innerHeight) return;
-
-  var pop = document.createElement("div");
-  pop.className = "dmg-popup" + (isCrit ? " crit" : "");
-  pop.textContent = damageText;
-  pop.style.left = sx.toFixed(1) + "px";
-  pop.style.top = sy.toFixed(1) + "px";
-  damageContainer.appendChild(pop);
-
-  setTimeout(function () {
-    if (pop.parentNode) pop.parentNode.removeChild(pop);
-  }, 650);
+  // Desativado: números de dano removidos para manter a tela limpa e sem poluição visual
+  return;
 }
 
 // ==========================================
@@ -756,6 +741,7 @@ export function triggerBomb() {
 // ==========================================
 export function initCombat() {
   damageContainer = document.getElementById("damage-container");
+  combatTime = 0;
 
   // Esconde e desativa qualquer retículo de tela remanescente
   var crosshairEl = document.getElementById("target-crosshair");
@@ -925,6 +911,7 @@ function detonateExplosiveBullet(bullet) {
 // 7. ATUALIZAÇÃO DO COMBATE E DISPARO
 // ==========================================
 export function updateCombat(dt) {
+  combatTime += dt;
   // 0. Atualização de pickups, baús, minas, torretas e barreiras
   updatePickups(dt);
 
@@ -1235,9 +1222,9 @@ export function updateCombat(dt) {
     state.orbitalBladesGroup.visible = isBladesEquipped;
 
     if (isBladesEquipped) {
-      state.bladesAngle = (state.bladesAngle || 0) + dt * 4.2;
+      state.bladesAngle = (state.bladesAngle || 0) + dt * WEAPONS.blades.orbitSpeed;
       var bMeshes = state.orbitalBladesGroup.userData.blades || [];
-      var bRadiusOrbit = 0.85;
+      var bRadiusOrbit = WEAPONS.blades.orbitRadius;
 
       var bUp = state.playerLocalDir.clone().normalize();
       var bRef = new THREE.Vector3(0, 1, 0);
@@ -1265,11 +1252,18 @@ export function updateCombat(dt) {
 
           var distBladeZ = bWorldP.distanceTo(bzc.mesh.position);
           if (distBladeZ < 0.38) {
-            bzc.hp -= 2.2;
-            bzc.flashTimer = 0.08;
-            showDamagePopup(bzc.mesh.position, "2.2⚔️", true);
+            // Cooldown por zumbi: cada zumbi só pode ser atingido a cada 0.35s
+            if (bzc.lastBladeHit !== undefined && (combatTime - bzc.lastBladeHit) < 0.35) {
+              continue;
+            }
+            bzc.lastBladeHit = combatTime;
 
-            // Consumo de munição por impacto
+            var bladeDmg = WEAPONS.blades.contactDamage;
+            bzc.hp -= bladeDmg;
+            bzc.flashTimer = 0.08;
+            showDamagePopup(bzc.mesh.position, bladeDmg + "⚔️", true);
+
+            // Consumo de 1 munição só quando o dano é realmente aplicado
             state.temporaryWeaponAmmo = Math.max(0, (state.temporaryWeaponAmmo || 0) - 1);
             state.ui.updateWeaponUI?.();
 
@@ -1282,6 +1276,7 @@ export function updateCombat(dt) {
             }
 
             if (bzc.hp <= 0) {
+              bzc.lastBladeHit = undefined;
               bzc.state = "die";
               bzc.dieTimer = 0;
               bzc.mesh.getWorldPosition(tempDeathWorldPos);

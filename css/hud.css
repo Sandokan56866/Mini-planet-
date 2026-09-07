@@ -93,13 +93,11 @@ html, body {
   opacity: 1;
 }
 
-/* FLOATING DAMAGE NUMBERS CONTAINER */
+/* FLOATING DAMAGE NUMBERS CONTAINER (DESATIVADO) */
 #damage-container {
-  position: absolute;
-  inset: 0;
+  display: none !important;
+  visibility: hidden !important;
   pointer-events: none;
-  z-index: 25;
-  overflow: hidden;
 }
 
 .dmg-pop {
@@ -145,18 +143,39 @@ html, body {
   box-sizing: border-box;
 }
 
-/* TOP BAR (Canto esquerdo: Anéis | Canto direito: Armas e Pílula de Onda) */
+/* TOP BAR (Linha Principal: Anéis e Pílula de Progresso | Sub-linha: Armas e Minas) */
 .top-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  box-sizing: border-box;
+  gap: 4px;
+  pointer-events: none;
+  min-width: 0;
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+.top-bar-main-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
   width: 100%;
   box-sizing: border-box;
   gap: 6px;
-  pointer-events: none;
   min-width: 0;
-  padding-left: env(safe-area-inset-left);
-  padding-right: env(safe-area-inset-right);
+  pointer-events: none;
+}
+
+.top-bar-sub-row {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  width: 100%;
+  box-sizing: border-box;
+  pointer-events: none;
+  padding-left: 2px;
 }
 
 /* ==========================================
@@ -395,10 +414,9 @@ html, body {
    ========================================== */
 .stats-compact-container {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 1px;
-  pointer-events: none;
+  align-items: center;
+  gap: 6px;
+  pointer-events: auto;
   flex-shrink: 0;
   min-width: 0;
 }
@@ -440,40 +458,68 @@ html, body {
 
 @media (max-width: 480px) {
   .top-bar {
-    gap: 4px;
+    gap: 3px;
   }
   .rings-group {
     gap: 4px;
   }
-  .top-right-group {
-    gap: 4px;
+  .ring-container {
+    width: 36px;
+    height: 36px;
+  }
+  .ring-svg {
+    width: 36px;
+    height: 36px;
   }
   .weapon-name {
-    max-width: 45px;
+    max-width: 50px;
     font-size: 10px;
+  }
+  .compact-pill {
+    padding: 2px 6px;
+    gap: 4px;
+  }
+  .pill-item {
+    font-size: 10px;
+  }
+  .pill-dot {
+    font-size: 7px;
   }
   .fps-tiny {
     display: none;
   }
+  .audio-mute-btn {
+    width: 24px;
+    height: 24px;
+    font-size: 11px;
+  }
 }
 
 @media (max-width: 360px) {
+  .ring-container {
+    width: 34px;
+    height: 34px;
+  }
+  .ring-svg {
+    width: 34px;
+    height: 34px;
+  }
   .weapon-name {
     display: none;
   }
   .compact-pill {
-    padding: 2px 6px;
+    padding: 2px 5px;
     gap: 3px;
   }
   .pill-item {
-    font-size: 10px;
+    font-size: 9.5px;
   }
 }
 
 /* WEAPON PICKUP NOTIFICATION BANNER */
 #weapon-toast {
   position: absolute;
-  top: 76px;
+  top: 168px;
   left: 50%;
   transform: translateX(-50%) translateY(-20px);
   background: linear-gradient(135deg, rgba(245, 158, 11, 0.92) 0%, rgba(217, 119, 6, 0.95) 100%);
@@ -500,7 +546,7 @@ html, body {
 #frenzy-pill {
   display: none;
   position: absolute;
-  top: 76px;
+  top: 122px;
   left: max(16px, env(safe-area-inset-left));
   background: linear-gradient(135deg, rgba(239, 68, 68, 0.85) 0%, rgba(234, 88, 12, 0.9) 100%);
   border: 1px solid rgba(254, 202, 202, 0.4);
@@ -516,6 +562,9 @@ html, body {
   gap: 6px;
   animation: frenzyPulse 0.8s ease-in-out infinite alternate;
 }
+#frenzy-pill.active {
+  display: inline-flex;
+}
 @keyframes frenzyPulse {
   0% { transform: scale(0.98); box-shadow: 0 0 12px rgba(239, 68, 68, 0.4); }
   100% { transform: scale(1.04); box-shadow: 0 0 24px rgba(239, 68, 68, 0.8); }
@@ -525,7 +574,7 @@ html, body {
 #boss-hud {
   display: none;
   position: absolute;
-  top: 72px;
+  top: 76px;
   left: 50%;
   transform: translateX(-50%);
   width: 88%;
@@ -539,6 +588,9 @@ html, body {
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8), 0 0 25px rgba(220, 38, 38, 0.35);
   z-index: 22;
   pointer-events: none;
+}
+#boss-hud.active {
+  display: block;
 }
 .boss-header {
   display: flex;
@@ -733,6 +785,10 @@ html, body {
 /* DRONE COMPANION HUD TIMER */
 #drone-pill {
   display: none;
+  position: absolute;
+  top: 122px;
+  right: 10px;
+  z-index: 20;
   background: rgba(14, 116, 144, 0.88);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);

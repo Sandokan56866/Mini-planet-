@@ -67,13 +67,13 @@ var camera = new THREE.PerspectiveCamera(CAM_FOV, window.innerWidth / window.inn
 
 var renderer = new THREE.WebGLRenderer({
   canvas: canvas,
-  antialias: true,
+  antialias: false,
   powerPreference: "high-performance"
 });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2.0));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 
 var planetGroup = new THREE.Group();
 scene.add(planetGroup);
@@ -384,7 +384,7 @@ export function resetGame() {
   hideStartScreen();
   var lvlModal = document.getElementById("levelup-modal");
   if (lvlModal) lvlModal.style.display = "none";
-  var skillModal = document.getElementById("skilltree-modal");
+  var skillModal = document.getElementById("skills-tree-modal");
   if (skillModal) skillModal.style.display = "none";
 
   if (DEBUG_RESET) {

@@ -43,6 +43,7 @@ import {
 import { state } from "../state.js";
 import { getRawElevation, fibonacciPoint } from "../core/math.js";
 import { getBiomeAt } from "./terrain.js";
+import { updateBiomeUI } from "../ui/hud.js";
 
 // Garante matematicamente que a base da geometria fique exatamente em y = 0
 function alignBaseToZero(geo) {
@@ -896,20 +897,17 @@ export function updateProps(dt) {
     }
   }
 
-  // Atualização do Bioma Atual no HUD
+  // Atualização do Bioma Atual no HUD (disparada só quando state.currentBiome mudar)
   var playerDir = state.playerLocalDir || new THREE.Vector3(0, 1, 0);
   var curBiome = getBiomeAt(playerDir);
-  state.currentBiome = curBiome.id;
-  state.currentBiomeName = curBiome.name;
-
-  // Atualiza painel do HUD com o nome e ícone do bioma
-  var biomeEl = document.getElementById("day-night-val") || document.getElementById("biome-display");
-  if (biomeEl) {
-    biomeEl.textContent = curBiome.icon + " " + curBiome.name;
-    biomeEl.style.color = curBiome.id === "frozen" ? "#93c5fd" :
-                          curBiome.id === "swamp" ? "#86efac" :
-                          curBiome.id === "desert" ? "#fde047" :
-                          curBiome.id === "industrial" ? "#fb923c" :
-                          curBiome.id === "forest" ? "#a3e635" : "#e2e8f0";
+  if (state.currentBiome !== curBiome.id) {
+    state.currentBiome = curBiome.id;
+    state.currentBiomeName = curBiome.name;
+    var biomeColor = curBiome.id === "frozen" ? "#93c5fd" :
+                     curBiome.id === "swamp" ? "#86efac" :
+                     curBiome.id === "desert" ? "#fde047" :
+                     curBiome.id === "industrial" ? "#fb923c" :
+                     curBiome.id === "forest" ? "#a3e635" : "#e2e8f0";
+    updateBiomeUI(curBiome.icon, curBiome.name, biomeColor);
   }
 }

@@ -67,6 +67,13 @@ var zRotMatrix = new THREE.Matrix4();
 var zTargetQuat = new THREE.Quaternion();
 var zModelOffsetQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), ZOMBIE_MODEL_ROTATION_Y_OFFSET);
 
+// Vetores reutilizáveis para colisão dos zumbis com props do cenário (evita GC e alocações por frame)
+var zCurDir = new THREE.Vector3();
+var zCandDir = new THREE.Vector3();
+var zMoveVec = new THREE.Vector3();
+var zResolvedDir = new THREE.Vector3();
+var zToColVec = new THREE.Vector3();
+
 // Raycaster reutilizável para determinação exata da elevação no terreno
 var zRaycaster = new THREE.Raycaster();
 var zRayOrigin = new THREE.Vector3();
@@ -422,25 +429,21 @@ function createZombieMesh(type) {
   // Pernas
   var legL = new THREE.Mesh(new THREE.BoxGeometry(legW, legH, legD), legMat);
   legL.position.set(-torsoW * 0.28, legH * 0.5, 0);
-  legL.castShadow = true;
   root.add(legL);
 
   var legR = new THREE.Mesh(new THREE.BoxGeometry(legW, legH, legD), legMat);
   legR.position.set(torsoW * 0.28, legH * 0.5, 0);
-  legR.castShadow = true;
   root.add(legR);
 
   // Tronco
   var torsoPosY = (type === "crawler") ? 0.10 : (legH + torsoH * 0.5);
   var torso = new THREE.Mesh(new THREE.BoxGeometry(torsoW, torsoH, torsoD), legMat);
   torso.position.set(0, torsoPosY, 0);
-  torso.castShadow = true;
   root.add(torso);
 
   // Cabeça
   var head = new THREE.Mesh(new THREE.BoxGeometry(headSize, headSize, headSize), skinMat);
   head.position.set(0, torsoH * 0.5 + headSize * 0.5, (type === "crawler" ? 0.12 : 0));
-  head.castShadow = true;
   torso.add(head);
 
   // Olhos
@@ -457,12 +460,10 @@ function createZombieMesh(type) {
   // Braços
   var armL = new THREE.Mesh(new THREE.BoxGeometry(armW, armH, armD), skinMat);
   armL.position.set(-torsoW * 0.5 - armW * 0.5, torsoH * 0.25, 0);
-  armL.castShadow = true;
   torso.add(armL);
 
   var armR = new THREE.Mesh(new THREE.BoxGeometry(armW, armH, armD), skinMat);
   armR.position.set(torsoW * 0.5 + armW * 0.5, torsoH * 0.25, 0);
-  armR.castShadow = true;
   torso.add(armR);
 
   var armorPlate = null;
@@ -486,7 +487,6 @@ function createZombieMesh(type) {
     // Placas de metal (caixas cinzas presas ao tronco frontal)
     armorPlate = new THREE.Mesh(new THREE.BoxGeometry(torsoW * 1.05, torsoH * 0.90, 0.04), matArmoredPlates);
     armorPlate.position.set(0, 0, torsoD * 0.5 + 0.02);
-    armorPlate.castShadow = true;
     torso.add(armorPlate);
   } else if (type === "screamer") {
     // Boca aberta grande com interior oco escuro
@@ -522,10 +522,11 @@ function createZombieMesh(type) {
     walkPhase: 0,
     phaseOffset: Math.random() * Math.PI * 2,
     frameOffset: Math.floor(Math.random() * 8),
+    blockedCol: null,
     surfaceRadius: PLANET_BASE_RADIUS,
     targetRadius: PLANET_BASE_RADIUS,
     isTargetVisual: false,
-    hasCastShadow: true,
+    hasCastShadow: false,
     state: "walk",
     // Comportamento do Cuspidor
     spitCooldown: 1.5 + Math.random() * 2.0,
@@ -1002,6 +1003,7 @@ function spawnSingleZombie(candidateDir, targetType, isBoss, typeOverride) {
   freeZombie.windupTimer = 0;
   freeZombie.chargeTimer = 0;
   freeZombie.restTimer = 0;
+  freeZombie.blockedCol = null;
 
   var spawnRadius = getTerrainRadiusAtDir(candidateDir, radiusAt(candidateDir));
   freeZombie.surfaceRadius = spawnRadius;
@@ -1121,36 +1123,63 @@ export function updateEnemies(dt) {
     var pDot = z.dirLocal.dot(state.playerLocalDir);
     var isDistant = pDot < 0.78;
 
-    // DESEMPENHO NO ANDROID: Desliga castShadow e simplifica animação dos distantes
+    // DESEMPENHO NO ANDROID: Simplifica animação dos distantes
     if ((isLowFps || state.zombiePool.length > 50) && isDistant && z.type !== "boss") {
-      if (z.hasCastShadow) {
-        z.head.castShadow = false;
-        z.torso.castShadow = false;
-        z.legL.castShadow = false;
-        z.legR.castShadow = false;
-        z.armL.castShadow = false;
-        z.armR.castShadow = false;
-        z.hasCastShadow = false;
-      }
-
       var shouldSkipAnim = ((state.frameCount + z.frameOffset) % 3 !== 0);
       if (shouldSkipAnim) {
         zAxis.crossVectors(z.dirLocal, state.playerLocalDir).normalize();
         if (zAxis.lengthSq() > 0.0001) {
-          z.dirLocal.applyAxisAngle(zAxis, z.speed * dt);
+          zCurDir.copy(z.dirLocal);
+          zCandDir.copy(z.dirLocal).applyAxisAngle(zAxis, z.speed * dt).normalize();
+          zMoveVec.copy(zCandDir).sub(zCurDir);
+          zResolvedDir.copy(zCandDir);
+
+          if (state.colliders && state.colliders.length > 0) {
+            var shouldCheckCollidersDistant = ((state.frameCount + z.frameOffset) % 3 === 0);
+            if (shouldCheckCollidersDistant) {
+              z.blockedCol = null;
+              for (var ciD = 0; ciD < state.colliders.length; ciD++) {
+                var colD = state.colliders[ciD];
+                var dotCandD = zResolvedDir.dot(colD.dir);
+                if (dotCandD < 0.985) continue;
+
+                if (dotCandD > colD.cosRad) {
+                  zToColVec.copy(colD.dir).addScaledVector(zCurDir, -colD.dir.dot(zCurDir));
+                  var toColLenD = zToColVec.length();
+                  if (toColLenD > 0.00001) {
+                    zToColVec.divideScalar(toColLenD);
+                    var projD = zMoveVec.dot(zToColVec);
+                    if (projD > 0) {
+                      zMoveVec.addScaledVector(zToColVec, -projD);
+                      zResolvedDir.copy(zCurDir).add(zMoveVec).normalize();
+                      z.blockedCol = colD;
+                    }
+                  }
+                }
+              }
+            } else if (z.blockedCol) {
+              var colD = z.blockedCol;
+              var dotCandD = zResolvedDir.dot(colD.dir);
+              if (dotCandD > colD.cosRad) {
+                zToColVec.copy(colD.dir).addScaledVector(zCurDir, -colD.dir.dot(zCurDir));
+                var toColLenD = zToColVec.length();
+                if (toColLenD > 0.00001) {
+                  zToColVec.divideScalar(toColLenD);
+                  var projD = zMoveVec.dot(zToColVec);
+                  if (projD > 0) {
+                    zMoveVec.addScaledVector(zToColVec, -projD);
+                    zResolvedDir.copy(zCurDir).add(zMoveVec).normalize();
+                  }
+                }
+              } else {
+                z.blockedCol = null;
+              }
+            }
+          }
+          z.dirLocal.copy(zResolvedDir);
         }
         z.mesh.position.copy(z.dirLocal).multiplyScalar(z.surfaceRadius);
         continue;
-      }
-    } else {
-      if (!z.hasCastShadow) {
-        z.head.castShadow = true;
-        z.torso.castShadow = true;
-        z.legL.castShadow = true;
-        z.legR.castShadow = true;
-        z.armL.castShadow = true;
-        z.armR.castShadow = true;
-        z.hasCastShadow = true;
       }
     }
 
@@ -1324,7 +1353,8 @@ export function updateEnemies(dt) {
     // ========================================================
     if (!isSpitterHolding) {
       if (isButcherCharging && z.chargeTravelAxis.lengthSq() > 0.001) {
-        z.dirLocal.applyAxisAngle(z.chargeTravelAxis, effectiveSpeed * dt);
+        // O chefe Carniceiro em investida ignora colliders (ele atropela)
+        z.dirLocal.applyAxisAngle(z.chargeTravelAxis, effectiveSpeed * dt).normalize();
       } else {
         zAxis.crossVectors(z.dirLocal, state.playerLocalDir).normalize();
         if (z.type === "swarm") {
@@ -1332,7 +1362,58 @@ export function updateEnemies(dt) {
           zAxis.applyAxisAngle(z.dirLocal, Math.sin(phase * 1.8) * 0.25);
         }
         if (zAxis.lengthSq() > 0.0001) {
-          z.dirLocal.applyAxisAngle(zAxis, effectiveSpeed * dt);
+          // Direção candidata do movimento
+          zCurDir.copy(z.dirLocal);
+          zCandDir.copy(z.dirLocal).applyAxisAngle(zAxis, effectiveSpeed * dt).normalize();
+          zMoveVec.copy(zCandDir).sub(zCurDir);
+          zResolvedDir.copy(zCandDir);
+
+          // Colisão com obstáculos do relevo e deslizamento tangencial
+          if (state.colliders && state.colliders.length > 0) {
+            var shouldCheckColliders = ((state.frameCount + z.frameOffset) % 3 === 0);
+            if (shouldCheckColliders) {
+              z.blockedCol = null;
+              for (var ci = 0; ci < state.colliders.length; ci++) {
+                var col = state.colliders[ci];
+                var dotCandidate = zResolvedDir.dot(col.dir);
+                if (dotCandidate < 0.985) continue;
+
+                if (dotCandidate > col.cosRad) {
+                  zToColVec.copy(col.dir).addScaledVector(zCurDir, -col.dir.dot(zCurDir));
+                  var toColLen = zToColVec.length();
+                  if (toColLen > 0.00001) {
+                    zToColVec.divideScalar(toColLen);
+                    var proj = zMoveVec.dot(zToColVec);
+                    if (proj > 0) {
+                      zMoveVec.addScaledVector(zToColVec, -proj);
+                      zResolvedDir.copy(zCurDir).add(zMoveVec).normalize();
+                      z.blockedCol = col;
+                    }
+                  }
+                }
+              }
+            } else if (z.blockedCol) {
+              // Frames intermediários: teste pontual apenas contra o obstáculo ativo para manter fluidez
+              var col = z.blockedCol;
+              var dotCandidate = zResolvedDir.dot(col.dir);
+              if (dotCandidate > col.cosRad) {
+                zToColVec.copy(col.dir).addScaledVector(zCurDir, -col.dir.dot(zCurDir));
+                var toColLen = zToColVec.length();
+                if (toColLen > 0.00001) {
+                  zToColVec.divideScalar(toColLen);
+                  var proj = zMoveVec.dot(zToColVec);
+                  if (proj > 0) {
+                    zMoveVec.addScaledVector(zToColVec, -proj);
+                    zResolvedDir.copy(zCurDir).add(zMoveVec).normalize();
+                  }
+                }
+              } else {
+                z.blockedCol = null;
+              }
+            }
+          }
+
+          z.dirLocal.copy(zResolvedDir);
         }
       }
     }

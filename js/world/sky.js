@@ -76,8 +76,8 @@ export function initSky() {
   sunLight.position.copy(posDaySun);
   sunLight.target.position.set(0, 0, 0);
   sunLight.castShadow = true;
-  sunLight.shadow.mapSize.width = 1024;
-  sunLight.shadow.mapSize.height = 1024;
+  sunLight.shadow.mapSize.width = 512;
+  sunLight.shadow.mapSize.height = 512;
   sunLight.shadow.camera.near = 15;
   sunLight.shadow.camera.far = 85;
   sunLight.shadow.camera.left = -22;

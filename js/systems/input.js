@@ -24,7 +24,7 @@ var bombBtn = null;
 export function initInput() {
   joystickArea = document.getElementById("joystick-area");
   joystickKnob = document.getElementById("joystick-knob");
-  bombBtn = document.getElementById("bomb-btn");
+  bombBtn = document.getElementById("btn-bomb");
 
   // Distância fixa da câmera (sem zoom)
   state.targetCamDistance = CAM_FIXED_DISTANCE;
@@ -47,7 +47,7 @@ export function initInput() {
 
   // Botão circular da Bomba
   function bindBombButton() {
-    bombBtn = document.getElementById("bomb-btn");
+    bombBtn = document.getElementById("btn-bomb");
     if (bombBtn && !bombBtn.dataset.bound) {
       bombBtn.dataset.bound = "true";
       var onBombTrigger = function (e) {
@@ -166,7 +166,7 @@ var prevTouchY = 0;
 function isInteractiveUI(target) {
   if (!target) return false;
   return target.closest("#joystick-area") ||
-         target.closest("#bomb-btn") ||
+         target.closest("#btn-bomb") ||
          target.closest("#restart-btn") ||
          target.closest(".upgrade-card-btn") ||
          target.closest("#start-play-btn") ||

@@ -3,6 +3,7 @@
 // Depende de: js/config.js, js/state.js, js/core/math.js
 
 import {
+  PLANET_BASE_RADIUS,
   MAX_BULLETS,
   MAX_PICKUPS,
   BASE_SHOOT_INTERVAL,
@@ -788,13 +789,17 @@ export function initCombat() {
   if (state.bombsCount === undefined) state.bombsCount = INITIAL_BOMBS;
   state.maxBombs = MAX_BOMBS;
 
-  // Inicializa meshes do Drone Companion e Lâminas Orbitais
+  // Inicializa meshes do Drone Companion e Lâminas Orbitais (adicionados diretamente à state.scene para coordenadas de mundo corretas)
   if (!state.droneType) {
     state.droneType = "sentinela";
   }
-  if (!state.droneMesh) {
-    state.droneMesh = createDroneCompanionMesh(state.droneType);
-    state.planetGroup.add(state.droneMesh);
+  if (state.droneMesh) {
+    if (state.droneMesh.parent) state.droneMesh.parent.remove(state.droneMesh);
+    state.droneMesh = null;
+  }
+  state.droneMesh = createDroneCompanionMesh(state.droneType);
+  if (state.scene) {
+    state.scene.add(state.droneMesh);
   }
   state.droneActive = false;
   state.droneShootTimer = 0;
@@ -804,9 +809,13 @@ export function initCombat() {
   }
   state.ui.updateDroneIndicatorUI?.();
 
-  if (!state.orbitalBladesGroup) {
-    state.orbitalBladesGroup = createOrbitalBlades();
-    state.planetGroup.add(state.orbitalBladesGroup);
+  if (state.orbitalBladesGroup) {
+    if (state.orbitalBladesGroup.parent) state.orbitalBladesGroup.parent.remove(state.orbitalBladesGroup);
+    state.orbitalBladesGroup = null;
+  }
+  state.orbitalBladesGroup = createOrbitalBlades();
+  if (state.scene) {
+    state.scene.add(state.orbitalBladesGroup);
   }
   state.bladesAngle = 0;
 
@@ -859,7 +868,8 @@ export function initCombat() {
       damage: 1,
       pierceLeft: 0,
       ricochetsLeft: 0,
-      hitZombies: []
+      hitZombies: [],
+      spawnHeight: 0
     });
   }
 
@@ -1134,6 +1144,7 @@ export function updateCombat(dt) {
 
       freeBullet.active = true;
       freeBullet.dirLocal.copy(state.playerLocalDir);
+      freeBullet.spawnHeight = 0;
       freeBullet.travelAxis.copy(pAxis);
       freeBullet.life = 0;
       freeBullet.maxLife = (wConfig.bulletLife || BULLET_MAX_LIFE) + rangeLevel2 * 0.15;
@@ -1247,8 +1258,14 @@ export function updateCombat(dt) {
             }
             var dDmg = dTypeCfg.damage * (1.0 + (state.upgrades.droneDamage?.level || 0) * 0.35);
 
+            var droneAngularDist = DRONE_ORBIT_RADIUS / PLANET_BASE_RADIUS;
+            var orbitDir = new THREE.Vector3().copy(rightVec).multiplyScalar(Math.cos(state.droneAngle)).addScaledVector(forwardVec, Math.sin(state.droneAngle)).normalize();
+            var rotAxis = new THREE.Vector3().crossVectors(state.playerLocalDir, orbitDir).normalize();
+
             db.active = true;
             db.dirLocal.copy(state.playerLocalDir);
+            db.dirLocal.applyAxisAngle(rotAxis, droneAngularDist);
+            db.spawnHeight = DRONE_HEIGHT;
             db.travelAxis.copy(dAimAxis);
             db.life = 0;
             db.maxLife = 0.9;
@@ -1447,8 +1464,14 @@ export function updateCombat(dt) {
       arcHeight = Math.sin(arcP * Math.PI) * 0.45;
     }
 
+    var heightOffset = 0;
+    if (bullet.spawnHeight && bullet.spawnHeight > 0) {
+      var spawnFade = Math.min(1.0, bullet.life / 0.15);
+      heightOffset = bullet.spawnHeight * (1.0 - spawnFade);
+    }
+
     bullet.dirLocal.applyAxisAngle(bullet.travelAxis, bullet.speed * dt);
-    var bRadius = radiusAt(bullet.dirLocal) + 0.35 + arcHeight;
+    var bRadius = radiusAt(bullet.dirLocal) + 0.35 + arcHeight + heightOffset;
     bullet.mesh.position.copy(bullet.dirLocal).multiplyScalar(bRadius);
 
     // Colisão do projétil contra obstáculos sólidos do cenário

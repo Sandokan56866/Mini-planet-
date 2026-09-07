@@ -746,9 +746,9 @@ export const BUTCHER_SPAWN_SWARM_CHANCE_ON_HIT = 0.18;
 // ==========================================
 // 9. SISTEMA DE MIRA AUTOMÁTICA E COMBATE
 // ==========================================
-export const BASE_AIM_RANGE_DAY = 0.38;
+export const BASE_AIM_RANGE_DAY = 0.20;
 export const AIM_RANGE_NIGHT_FACTOR = 0.55;
-export const RANGE_UPGRADE_STEP = 0.04;
+export const RANGE_UPGRADE_STEP = 0.055;
 
 export const AUTO_AIM_TURN_SPEED = 6.0;
 export const AIM_ALIGN_TOLERANCE_DEG = 12.0;
@@ -1069,7 +1069,7 @@ export const WEAPONS_CONFIG = {
     fireRate: BASE_PISTOL_FIRE_RATE,
     bulletSpeed: 1.15,
     bulletLife: 1.3,
-    range: 0.38,
+    range: 0.20,
     spread: 0,
     projectiles: 1,
     pierce: 0,
@@ -1087,7 +1087,7 @@ export const WEAPONS_CONFIG = {
     fireRate: 0.11,
     bulletSpeed: 1.45,
     bulletLife: 1.4,
-    range: 0.42,
+    range: 0.23,
     spread: 0.045,
     projectiles: 1,
     pierce: 0,
@@ -1105,7 +1105,7 @@ export const WEAPONS_CONFIG = {
     fireRate: 0.60,
     bulletSpeed: 1.25,
     bulletLife: 0.35, // Curto alcance
-    range: 0.28,
+    range: 0.15,
     spread: 0.07,     // Leque de 5 projéteis
     projectiles: 5,
     pierce: 0,
@@ -1123,7 +1123,7 @@ export const WEAPONS_CONFIG = {
     fireRate: 0.65,
     bulletSpeed: 2.50, // Projétil rápido
     bulletLife: 1.1,
-    range: 0.55,
+    range: 0.30,
     spread: 0,
     projectiles: 1,
     pierce: 4,         // Perfura até 4 inimigos
@@ -1141,7 +1141,7 @@ export const WEAPONS_CONFIG = {
     fireRate: 0.05,    // Cone contínuo
     bulletSpeed: 0.75,
     bulletLife: 0.28,
-    range: 0.22,
+    range: 0.12,
     spread: 0.12,
     projectiles: 2,
     pierce: 5,
@@ -1162,7 +1162,7 @@ export const WEAPONS_CONFIG = {
     fireRate: 0.85,
     bulletSpeed: 0.70,
     bulletLife: 1.2,
-    range: 0.42,
+    range: 0.23,
     spread: 0,
     projectiles: 1,
     isArc: true,         // Projétil em arco parabólico
@@ -1182,7 +1182,7 @@ export const WEAPONS_CONFIG = {
     fireRate: 0.08,    // Alta cadência de tiro
     bulletSpeed: 1.45,
     bulletLife: 0.85,
-    range: 0.38,
+    range: 0.20,
     spread: 0.08,      // Espalhamento de rajada
     projectiles: 1,
     pierce: 0,
@@ -1200,7 +1200,7 @@ export const WEAPONS_CONFIG = {
     fireRate: 0.75,     // Cadência baixa
     bulletSpeed: 0.70,  // Projétil pesado e lento
     bulletLife: 1.6,
-    range: 0.58,
+    range: 0.32,
     spread: 0,
     projectiles: 1,
     isPerforator: true, // Atravessa TODOS os inimigos em linha reta sem limite de alvos
@@ -1264,7 +1264,7 @@ export const UPGRADES_CONFIG = {
   fireRate: { level: 0, max: 8, name: "Cadência de Tiro", icon: "⚡", desc: "+25% velocidade de disparo" },
   damage: { level: 0, max: 8, name: "Dano de Tiro", icon: "💥", desc: "+1 de dano por tiro" },
   spread: { level: 0, max: 5, name: "Projéteis Extras", icon: "🏹", desc: "+1 projétil em leque" },
-  range: { level: 0, max: 6, name: "Alcance", icon: "🎯", desc: "+30% alcance de mira e projétil" },
+  range: { level: 0, max: 8, name: "Alcance", icon: "🎯", desc: "Eixo central: amplia o alcance de mira e distância dos projéteis" },
   moveSpeed: { level: 0, max: 6, name: "Velocidade", icon: "👟", desc: "+15% velocidade ao andar" },
   maxHp: { level: 0, max: 8, name: "Vida Máxima", icon: "💖", desc: "+25 HP máximo e cura total" },
   instantHeal: { level: 0, max: 8, name: "Cura Instantânea", icon: "🧪", desc: "Cura +50 HP imediatamente" },

@@ -1,0 +1,7 @@
+{
+  "name": "Little Planet 3D",
+  "description": "Jogo de sobrevivência apocalipse zumbi em mini planeta esférico low poly com tiro automático, ondas, hordas e física em Three.js",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

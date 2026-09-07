@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <title>Little Planet 3D</title>
+    <meta name="description" content="Jogo de sobrevivência apocalipse zumbi em mini planeta esférico low poly com tiro automático, ondas, hordas e física em Three.js" />
+    <meta property="og:title" content="Little Planet 3D" />
+    <meta property="og:description" content="Jogo de sobrevivência apocalipse zumbi em mini planeta esférico low poly com tiro automático, ondas, hordas e física em Three.js" />
+    <link rel="stylesheet" href="css/hud.css" />
+    <!-- Three.js r128 via CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  </head>
+  <body>
+    <canvas id="webgl-canvas"></canvas>
+    <div class="space-starfield"></div>
+    <div id="damage-flash"></div>
+    <div id="low-hp-vignette"></div>
+    <div id="level-flash"></div>
+    <div id="damage-container"></div>
+    <!-- RETÍCULA VISUAL EM X SOBRE O ALVO MARCADO -->
+    <div id="target-crosshair"></div>
+
+    <!-- UI OVERLAY -->
+    <div id="ui-overlay">
+      <!-- Top Bar -->
+      <div class="top-bar">
+        <!-- Health Card -->
+        <div class="health-card">
+          <div class="health-header">
+            <span class="health-title">❤️ Vida</span>
+            <span class="health-val" id="hp-val">100 / 100</span>
+          </div>
+          <div class="health-bar-track">
+            <div class="health-bar-fill" id="hp-fill"></div>
+          </div>
+        </div>
+
+        <!-- XP Card -->
+        <div class="xp-card">
+          <div class="xp-header">
+            <span class="xp-title">⭐ Nível <span id="level-val">1</span></span>
+            <span class="xp-val" id="xp-val">0 / 30 XP</span>
+          </div>
+          <div class="xp-bar-track">
+            <div class="xp-bar-fill" id="xp-fill"></div>
+          </div>
+        </div>
+
+        <!-- Stats Card (Wave, Kills Progress & Horário) -->
+        <div class="stats-card">
+          <div class="stat-col">
+            <span class="stat-label">Onda</span>
+            <span class="stat-val" id="wave-val">1</span>
+          </div>
+          <div class="stat-divider"></div>
+          <div class="stat-col">
+            <span class="stat-label">Meta</span>
+            <span class="stat-val" id="wave-progress-val" style="color: #67e8f9;">0 / 15</span>
+          </div>
+          <div class="stat-divider"></div>
+          <div class="stat-col">
+            <span class="stat-label">Ciclo</span>
+            <span class="stat-val" id="day-night-val" style="color: #f59e0b;">☀️ Dia</span>
+          </div>
+        </div>
+
+        <!-- Active Frenzy Pill -->
+        <div id="frenzy-pill">
+          <span>🔥</span>
+          <span>Frenesi <strong id="frenzy-timer-val">8.0s</strong></span>
+        </div>
+      </div>
+
+      <!-- Boss Health HUD (Visible when Boss is spawned) -->
+      <div id="boss-hud">
+        <div class="boss-header">
+          <span class="boss-title">⚠️ O BRUTO (CHEFE)</span>
+          <span class="boss-hp-val" id="boss-hp-val">40 / 40</span>
+        </div>
+        <div class="boss-bar-track">
+          <div class="boss-bar-fill" id="boss-hp-fill"></div>
+        </div>
+      </div>
+
+      <!-- Big Wave Announcement in Center of Screen -->
+      <div id="big-announcer">
+        <div class="big-announcer-title" id="big-wave-title">ONDA 1</div>
+        <div class="big-announcer-sub" id="big-wave-sub">SOBREVIVA POR 45 SEGUNDOS</div>
+      </div>
+
+      <!-- Bottom Controls -->
+      <div class="bottom-bar">
+        <!-- Virtual Joystick -->
+        <div id="joystick-area">
+          <div id="joystick-base"></div>
+          <div id="joystick-knob"></div>
+        </div>
+
+        <!-- Right Side: Dash Button, Cam toggle & Hints -->
+        <div style="display: flex; flex-direction: column; align-items: flex-end;">
+          <!-- Dash Button with Circular SVG Cooldown -->
+          <div id="dash-btn-container" title="Esquiva rápida [Espaço / Shift]">
+            <svg id="dash-cooldown-svg" viewBox="0 0 76 76">
+              <circle id="dash-cooldown-circle" cx="38" cy="38" r="34"></circle>
+            </svg>
+            <div id="dash-btn">
+              <span class="dash-icon">⚡</span>
+              <span class="dash-label" id="dash-btn-label">DASH</span>
+            </div>
+          </div>
+
+          <button class="cam-btn" id="cam-zoom-btn" title="Alternar Zoom">🔍</button>
+          <div class="hint-pill">
+            🕹️ <strong>Mover:</strong> joystick ou WASD<br />
+            ⚡ <strong>Dash:</strong> botão ou Espaço<br />
+            🔫 <strong>Tiro:</strong> mira automática
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Level Up Modal (3 selectable cards) -->
+    <div id="levelup-modal">
+      <div class="levelup-container">
+        <div class="levelup-badge">⭐ Subiu de Nível!</div>
+        <div class="levelup-title">Escolha uma Melhoria</div>
+        <div class="levelup-sub">Fortaleça suas habilidades para enfrentar as hordas seguintes.</div>
+        <div class="upgrade-cards-grid" id="upgrade-cards-grid">
+          <!-- Dynamically populated 3 cards -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Game Over Modal -->
+    <div id="gameover-modal">
+      <div class="gameover-card">
+        <div class="gameover-icon">☣️</div>
+        <div class="gameover-title">Fim da Linha</div>
+        <div class="gameover-subtitle">Você foi alcançado pela horda de infectados.</div>
+        <div class="gameover-stats">
+          <div class="gameover-stat-item">
+            <span class="gameover-stat-label">Abates</span>
+            <span class="gameover-stat-value" id="final-kills">0</span>
+          </div>
+          <div class="gameover-stat-item">
+            <span class="gameover-stat-label">Ondas</span>
+            <span class="gameover-stat-value" id="final-waves">1</span>
+          </div>
+          <div class="gameover-stat-item">
+            <span class="gameover-stat-label">Nível</span>
+            <span class="gameover-stat-value" id="final-level">1</span>
+          </div>
+          <div class="gameover-stat-item">
+            <span class="gameover-stat-label">Tempo</span>
+            <span class="gameover-stat-value" id="final-time">0s</span>
+          </div>
+        </div>
+        <button class="gameover-restart-btn" id="restart-btn">Recomeçar</button>
+      </div>
+    </div>
+
+    <script type="module" src="js/main.js"></script>
+  </body>
+</html>

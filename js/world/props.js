@@ -6,6 +6,7 @@ import {
   PLANET_BASE_RADIUS,
   SEA_LEVEL,
   PROP_CANDIDATES,
+  MIN_PROP_GAP,
   MAX_HOUSES,
   MAX_CARS,
   MAX_POLES,
@@ -425,6 +426,21 @@ export function initProps() {
   state.propsList = [];
   state.swampVapors = [];
 
+  var acceptedProps = [];
+
+  function isCandidateTooClose(candidateDir, candidateAngR) {
+    for (var a = 0; a < acceptedProps.length; a++) {
+      var acc = acceptedProps[a];
+      var dot = candidateDir.dot(acc.dir);
+      if (dot <= 0.97) continue;
+      var distAng = Math.acos(Math.max(-1, Math.min(1, dot)));
+      if (distAng < candidateAngR + acc.angRad + MIN_PROP_GAP) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   var landmarkPlanePlaced = false;
   var landmarkTrailerPlaced = false;
 
@@ -446,7 +462,7 @@ export function initProps() {
     var biome = getBiomeAt(pDir);
 
     // Variação de densidade por bioma (Industrial denso, Deserto aberto)
-    if (Math.random() > (biome.propDensity || 0.85)) {
+    if (Math.random() > (biome.propDensity !== undefined ? biome.propDensity : 0.45)) {
       continue;
     }
 
@@ -463,6 +479,9 @@ export function initProps() {
     if (biome.id === "suburb") {
       if (roll < 0.26 && counts.house < MAX_HOUSES) {
         var sH = 0.9 + Math.random() * 0.4;
+        var angR = (0.75 * sH) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sH, sH, sH);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.04);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
@@ -470,10 +489,13 @@ export function initProps() {
         state.propsList.push({ mesh: instHouses, index: counts.house, dir: pDir.clone(), basePos: dummyPos.clone(), scale: dummyScale.clone(), quat: dummyQuat.clone() });
         counts.house++;
 
-        var angR = (0.75 * sH) / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "house" });
+        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "house", blocksProjectiles: true });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       } else if (roll < 0.48 && counts.car < MAX_CARS) {
         var sC = 0.85 + Math.random() * 0.35;
+        var angR = (0.70 * sC) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sC, sC, sC);
         var tiltQuatC = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), (Math.random() - 0.5) * 0.28);
         var finalQuatC = dummyQuat.clone().multiply(tiltQuatC);
@@ -485,10 +507,13 @@ export function initProps() {
         state.propsList.push({ mesh: instCars, index: counts.car, dir: pDir.clone(), basePos: dummyPos.clone(), scale: dummyScale.clone(), quat: finalQuatC.clone() });
         counts.car++;
 
-        var angR = (0.70 * sC) / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "car" });
+        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "car", blocksProjectiles: true });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       } else if (roll < 0.68 && counts.pole < MAX_POLES) {
         var sP = 0.85 + Math.random() * 0.35;
+        var angR = (0.28 * sP) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sP, sP, sP);
         var tiltQuatP = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), (Math.random() - 0.5) * 0.32);
         var finalQuatP = dummyQuat.clone().multiply(tiltQuatP);
@@ -500,10 +525,13 @@ export function initProps() {
         state.propsList.push({ mesh: instPoles, index: counts.pole, dir: pDir.clone(), basePos: dummyPos.clone(), scale: dummyScale.clone(), quat: finalQuatP.clone() });
         counts.pole++;
 
-        var angR = (0.28 * sP) / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "pole" });
+        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "pole", blocksProjectiles: true });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       } else if (roll < 0.82 && counts.waterTank < MAX_WATER_TANKS) {
         var sWT = 0.8 + Math.random() * 0.35;
+        var angR = (0.55 * sWT) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sWT, sWT, sWT);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.04);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
@@ -511,22 +539,30 @@ export function initProps() {
         state.propsList.push({ mesh: instWaterTanks, index: counts.waterTank, dir: pDir.clone(), basePos: dummyPos.clone(), scale: dummyScale.clone(), quat: dummyQuat.clone() });
         counts.waterTank++;
 
-        var angR = (0.55 * sWT) / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "watertank" });
+        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "watertank", blocksProjectiles: true });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       } else if (roll < 0.92 && counts.fence < MAX_FENCES) {
         var sF = 0.85 + Math.random() * 0.35;
+        var angR = (0.40 * sF) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sF, sF, sF);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.03);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
         instFences.setMatrixAt(counts.fence, dummyMat4);
         counts.fence++;
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       } else if (counts.streetSign < MAX_STREET_SIGNS) {
         var sSS = 0.8 + Math.random() * 0.3;
+        var angR = (0.25 * sSS) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sSS, sSS, sSS);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.03);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
         instStreetSigns.setMatrixAt(counts.streetSign, dummyMat4);
         counts.streetSign++;
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       }
     }
 
@@ -536,18 +572,25 @@ export function initProps() {
     else if (biome.id === "forest") {
       // Landmark único: Trailer abandonado no meio da floresta
       if (!landmarkTrailerPlaced && Math.random() < 0.12) {
+        var angR = 0.95 / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         var trailerMesh = createAbandonedTrailerMesh();
         trailerMesh.position.copy(hitPoint).addScaledVector(pDir, -0.04);
         trailerMesh.quaternion.copy(dummyQuat);
         state.planetGroup.add(trailerMesh);
         landmarkTrailerPlaced = true;
-        var angR = 0.95 / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: hitPoint.clone(), angRad: angR, cosRad: Math.cos(angR), type: "trailer" });
+
+        state.colliders.push({ dir: pDir.clone(), pos: hitPoint.clone(), angRad: angR, cosRad: Math.cos(angR), type: "trailer", blocksProjectiles: true });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
         continue;
       }
 
       if (roll < 0.44 && counts.deadTree < MAX_DEAD_TREES) {
         var sT = 0.85 + Math.random() * 0.5;
+        var angR = (0.40 * sT) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sT, sT, sT);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.04);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
@@ -555,10 +598,13 @@ export function initProps() {
         state.propsList.push({ mesh: instDeadTrees, index: counts.deadTree, dir: pDir.clone(), basePos: dummyPos.clone(), scale: dummyScale.clone(), quat: dummyQuat.clone() });
         counts.deadTree++;
 
-        var angR = (0.40 * sT) / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "tree" });
+        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "tree", blocksProjectiles: true });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       } else if (roll < 0.65 && counts.fallenLog < MAX_FALLEN_LOGS) {
         var sL = 0.85 + Math.random() * 0.4;
+        var angR = (0.45 * sL) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sL, sL, sL);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.04);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
@@ -566,32 +612,43 @@ export function initProps() {
         state.propsList.push({ mesh: instFallenLogs, index: counts.fallenLog, dir: pDir.clone(), basePos: dummyPos.clone(), scale: dummyScale.clone(), quat: dummyQuat.clone() });
         counts.fallenLog++;
 
-        var angR = (0.45 * sL) / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "log" });
+        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "log", blocksProjectiles: false });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       } else if (roll < 0.80 && counts.stump < MAX_STUMPS) {
         var sStump = 0.8 + Math.random() * 0.4;
+        var angR = (0.30 * sStump) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sStump, sStump, sStump);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.03);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
         instStumps.setMatrixAt(counts.stump, dummyMat4);
         counts.stump++;
 
-        var angR = (0.30 * sStump) / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "stump" });
+        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "stump", blocksProjectiles: false });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       } else if (roll < 0.92 && counts.barbedWire < MAX_BARBED_WIRE) {
         var sBW = 0.85 + Math.random() * 0.3;
+        var angR = (0.35 * sBW) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sBW, sBW, sBW);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.03);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
         instBarbedWire.setMatrixAt(counts.barbedWire, dummyMat4);
         counts.barbedWire++;
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       } else if (counts.campfire < MAX_CAMPFIRES) {
         var sCF = 0.8 + Math.random() * 0.3;
+        var angR = (0.35 * sCF) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sCF, sCF, sCF);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.02);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
         instCampfires.setMatrixAt(counts.campfire, dummyMat4);
         counts.campfire++;
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       }
     }
 
@@ -601,6 +658,9 @@ export function initProps() {
     else if (biome.id === "industrial") {
       if (roll < 0.28 && counts.industrialTank < MAX_INDUSTRIAL_TANKS) {
         var sIT = 0.85 + Math.random() * 0.45;
+        var angR = (0.85 * sIT) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sIT, sIT, sIT);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.04);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
@@ -608,10 +668,13 @@ export function initProps() {
         state.propsList.push({ mesh: instIndustrialTanks, index: counts.industrialTank, dir: pDir.clone(), basePos: dummyPos.clone(), scale: dummyScale.clone(), quat: dummyQuat.clone() });
         counts.industrialTank++;
 
-        var angR = (0.85 * sIT) / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "tank" });
+        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "tank", blocksProjectiles: true });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       } else if (roll < 0.52 && counts.container < MAX_CONTAINERS) {
         var sCont = 0.85 + Math.random() * 0.35;
+        var angR = (0.82 * sCont) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sCont, sCont, sCont);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.04);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
@@ -619,10 +682,13 @@ export function initProps() {
         state.propsList.push({ mesh: instContainers, index: counts.container, dir: pDir.clone(), basePos: dummyPos.clone(), scale: dummyScale.clone(), quat: dummyQuat.clone() });
         counts.container++;
 
-        var angR = (0.82 * sCont) / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "container" });
+        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "container", blocksProjectiles: true });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       } else if (roll < 0.70 && counts.pipe < MAX_PIPES) {
         var sPipe = 0.85 + Math.random() * 0.35;
+        var angR = (0.50 * sPipe) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sPipe, sPipe, sPipe);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.04);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
@@ -630,30 +696,39 @@ export function initProps() {
         state.propsList.push({ mesh: instPipes, index: counts.pipe, dir: pDir.clone(), basePos: dummyPos.clone(), scale: dummyScale.clone(), quat: dummyQuat.clone() });
         counts.pipe++;
 
-        var angR = (0.50 * sPipe) / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "pipe" });
+        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "pipe", blocksProjectiles: true });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       } else if (roll < 0.82 && counts.forklift < MAX_FORKLIFTS) {
         var sFL = 0.8 + Math.random() * 0.3;
+        var angR = (0.45 * sFL) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sFL, sFL, sFL);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.04);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
         instForklifts.setMatrixAt(counts.forklift, dummyMat4);
         counts.forklift++;
 
-        var angR = (0.45 * sFL) / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "forklift" });
+        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "forklift", blocksProjectiles: true });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       } else if (roll < 0.91 && counts.scaffold < MAX_SCAFFOLDS) {
         var sScaff = 0.85 + Math.random() * 0.35;
+        var angR = (0.55 * sScaff) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sScaff, sScaff, sScaff);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.04);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
         instScaffolds.setMatrixAt(counts.scaffold, dummyMat4);
         counts.scaffold++;
 
-        var angR = (0.55 * sScaff) / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "scaffold" });
+        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "scaffold", blocksProjectiles: true });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       } else if (counts.burningBarrel < MAX_BURNING_BARRELS) {
         var sBB = 0.85 + Math.random() * 0.3;
+        var angR = (0.35 * sBB) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sBB, sBB, sBB);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.04);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
@@ -665,8 +740,8 @@ export function initProps() {
         state.planetGroup.add(fireLight);
         state.burningBarrels.push({ light: fireLight, basePos: dummyPos.clone(), dir: pDir.clone() });
 
-        var angR = (0.35 * sBB) / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "barrel" });
+        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "barrel", blocksProjectiles: true });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       }
     }
 
@@ -676,18 +751,25 @@ export function initProps() {
     else if (biome.id === "desert") {
       // Landmark único: Avião pequeno destroçado na areia
       if (!landmarkPlanePlaced && Math.random() < 0.15) {
+        var angR = 1.1 / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         var planeMesh = createCrashedPlaneMesh();
         planeMesh.position.copy(hitPoint).addScaledVector(pDir, -0.04);
         planeMesh.quaternion.copy(dummyQuat);
         state.planetGroup.add(planeMesh);
         landmarkPlanePlaced = true;
-        var angR = 1.1 / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: hitPoint.clone(), angRad: angR, cosRad: Math.cos(angR), type: "plane" });
+
+        state.colliders.push({ dir: pDir.clone(), pos: hitPoint.clone(), angRad: angR, cosRad: Math.cos(angR), type: "plane", blocksProjectiles: true });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
         continue;
       }
 
       if (roll < 0.28 && counts.giantBone < MAX_GIANT_BONES) {
         var sGB = 0.9 + Math.random() * 0.5;
+        var angR = (0.50 * sGB) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sGB, sGB, sGB);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.04);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
@@ -695,10 +777,13 @@ export function initProps() {
         state.propsList.push({ mesh: instGiantBones, index: counts.giantBone, dir: pDir.clone(), basePos: dummyPos.clone(), scale: dummyScale.clone(), quat: dummyQuat.clone() });
         counts.giantBone++;
 
-        var angR = (0.50 * sGB) / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "bone" });
+        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "bone", blocksProjectiles: false });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       } else if (roll < 0.52 && counts.bus < MAX_BUSES) {
         var sBus = 0.85 + Math.random() * 0.35;
+        var angR = (0.95 * sBus) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sBus, sBus, sBus);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.04);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
@@ -706,10 +791,13 @@ export function initProps() {
         state.propsList.push({ mesh: instBuses, index: counts.bus, dir: pDir.clone(), basePos: dummyPos.clone(), scale: dummyScale.clone(), quat: dummyQuat.clone() });
         counts.bus++;
 
-        var angR = (0.95 * sBus) / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "bus" });
+        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "bus", blocksProjectiles: true });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       } else if (roll < 0.74 && counts.powerPylon < MAX_POWER_PYLONS) {
         var sPyl = 0.85 + Math.random() * 0.35;
+        var angR = (0.45 * sPyl) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sPyl, sPyl, sPyl);
         var tiltQuatPyl = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), (Math.random() - 0.5) * 0.45);
         var finalQuatPyl = dummyQuat.clone().multiply(tiltQuatPyl);
@@ -718,15 +806,19 @@ export function initProps() {
         instPowerPylons.setMatrixAt(counts.powerPylon, dummyMat4);
         counts.powerPylon++;
 
-        var angR = (0.45 * sPyl) / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "pylon" });
+        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "pylon", blocksProjectiles: true });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       } else if (counts.buriedDebris < MAX_BURIED_DEBRIS) {
         var sBD = 0.75 + Math.random() * 0.5;
+        var angR = (0.40 * sBD) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sBD, sBD * 0.6, sBD);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.05);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
         instBuriedDebris.setMatrixAt(counts.buriedDebris, dummyMat4);
         counts.buriedDebris++;
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       }
     }
 
@@ -736,6 +828,9 @@ export function initProps() {
     else if (biome.id === "swamp") {
       if (roll < 0.28 && counts.stiltShack < MAX_STILT_SHACKS) {
         var sStilt = 0.85 + Math.random() * 0.4;
+        var angR = (0.65 * sStilt) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sStilt, sStilt, sStilt);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.04);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
@@ -743,28 +838,34 @@ export function initProps() {
         state.propsList.push({ mesh: instStiltShacks, index: counts.stiltShack, dir: pDir.clone(), basePos: dummyPos.clone(), scale: dummyScale.clone(), quat: dummyQuat.clone() });
         counts.stiltShack++;
 
-        var angR = (0.65 * sStilt) / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "stilt" });
+        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "stilt", blocksProjectiles: true });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       } else if (roll < 0.52 && counts.swampLog < MAX_SWAMP_LOGS) {
         var sSL = 0.85 + Math.random() * 0.35;
+        var angR = (0.42 * sSL) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sSL, sSL, sSL);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.04);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
         instSwampLogs.setMatrixAt(counts.swampLog, dummyMat4);
         counts.swampLog++;
 
-        var angR = (0.42 * sSL) / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "swamplog" });
+        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "swamplog", blocksProjectiles: false });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       } else if (roll < 0.76 && counts.toxicBarrel < MAX_TOXIC_BARRELS) {
         var sTB = 0.85 + Math.random() * 0.35;
+        var angR = (0.35 * sTB) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sTB, sTB, sTB);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.04);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
         instToxicBarrels.setMatrixAt(counts.toxicBarrel, dummyMat4);
         counts.toxicBarrel++;
 
-        var angR = (0.35 * sTB) / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "toxicbarrel" });
+        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "toxicbarrel", blocksProjectiles: true });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
 
         // Partículas de vapor esverdeado subindo sobre o pântano
         if (state.swampVapors.length < 16 && Math.random() < 0.30) {
@@ -784,11 +885,15 @@ export function initProps() {
         }
       } else if (counts.deadReed < MAX_DEAD_REEDS) {
         var sReed = 0.8 + Math.random() * 0.4;
+        var angR = (0.30 * sReed) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sReed, sReed, sReed);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.02);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
         instDeadReeds.setMatrixAt(counts.deadReed, dummyMat4);
         counts.deadReed++;
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       }
     }
 
@@ -798,6 +903,9 @@ export function initProps() {
     else if (biome.id === "frozen") {
       if (roll < 0.34 && counts.pine < MAX_PINES) {
         var sPine = 0.85 + Math.random() * 0.5;
+        var angR = (0.38 * sPine) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sPine, sPine, sPine);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.04);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
@@ -805,10 +913,13 @@ export function initProps() {
         state.propsList.push({ mesh: instPines, index: counts.pine, dir: pDir.clone(), basePos: dummyPos.clone(), scale: dummyScale.clone(), quat: dummyQuat.clone() });
         counts.pine++;
 
-        var angR = (0.38 * sPine) / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "pine" });
+        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "pine", blocksProjectiles: true });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       } else if (roll < 0.55 && counts.cabin < MAX_CABINS) {
         var sCab = 0.85 + Math.random() * 0.4;
+        var angR = (0.75 * sCab) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sCab, sCab, sCab);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.04);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
@@ -816,10 +927,13 @@ export function initProps() {
         state.propsList.push({ mesh: instCabins, index: counts.cabin, dir: pDir.clone(), basePos: dummyPos.clone(), scale: dummyScale.clone(), quat: dummyQuat.clone() });
         counts.cabin++;
 
-        var angR = (0.75 * sCab) / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "cabin" });
+        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "cabin", blocksProjectiles: true });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       } else if (roll < 0.74 && counts.iceBlock < MAX_ICE_BLOCKS) {
         var sIce = 0.8 + Math.random() * 0.5;
+        var angR = (0.50 * sIce) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sIce, sIce, sIce);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.04);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
@@ -827,25 +941,32 @@ export function initProps() {
         state.propsList.push({ mesh: instIceBlocks, index: counts.iceBlock, dir: pDir.clone(), basePos: dummyPos.clone(), scale: dummyScale.clone(), quat: dummyQuat.clone() });
         counts.iceBlock++;
 
-        var angR = (0.50 * sIce) / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "ice" });
+        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "ice", blocksProjectiles: true });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       } else if (roll < 0.88 && counts.snowCar < MAX_SNOW_CARS) {
         var sSCar = 0.85 + Math.random() * 0.35;
+        var angR = (0.65 * sSCar) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sSCar, sSCar, sSCar);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.04);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
         instSnowCars.setMatrixAt(counts.snowCar, dummyMat4);
         counts.snowCar++;
 
-        var angR = (0.65 * sSCar) / PLANET_BASE_RADIUS;
-        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "snowcar" });
+        state.colliders.push({ dir: pDir.clone(), pos: dummyPos.clone(), angRad: angR, cosRad: Math.cos(angR), type: "snowcar", blocksProjectiles: true });
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       } else if (counts.snowFence < MAX_SNOW_FENCES) {
         var sSF = 0.8 + Math.random() * 0.35;
+        var angR = (0.40 * sSF) / PLANET_BASE_RADIUS;
+        if (isCandidateTooClose(pDir, angR)) continue;
+
         dummyScale.set(sSF, sSF, sSF);
         dummyPos.copy(hitPoint).addScaledVector(pDir, -0.03);
         dummyMat4.compose(dummyPos, dummyQuat, dummyScale);
         instSnowFences.setMatrixAt(counts.snowFence, dummyMat4);
         counts.snowFence++;
+        acceptedProps.push({ dir: pDir.clone(), angRad: angR });
       }
     }
   }

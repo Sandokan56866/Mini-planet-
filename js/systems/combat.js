@@ -51,12 +51,15 @@ import {
 import { state } from "../state.js";
 import { radiusAt } from "../core/math.js";
 import { initPickups, updatePickups, spawnXpOrb } from "./pickups.js";
+import { resolveZombieMove } from "../entities/enemies.js";
 
 // Vetores temporários reutilizáveis para evitar alocação de memória
 var tempAimVec = new THREE.Vector3();
 var tempAimTargetPos = new THREE.Vector3();
 var tempProjVec = new THREE.Vector3();
 var tempDeathWorldPos = new THREE.Vector3();
+var tempPushAxis = new THREE.Vector3();
+var tempKnockbackCand = new THREE.Vector3();
 
 // Acumulador de tempo de combate para cooldowns de efeitos e armas
 var combatTime = 0;
@@ -723,9 +726,11 @@ export function triggerBomb() {
         }
       } else {
         // Empurra os sobreviventes para longe da posição do jogador
-        var pushAxis = new THREE.Vector3().crossVectors(state.playerLocalDir, z.dirLocal).normalize();
-        if (pushAxis.lengthSq() > 0.001) {
-          z.dirLocal.applyAxisAngle(pushAxis, knockbackDist);
+        tempPushAxis.crossVectors(state.playerLocalDir, z.dirLocal).normalize();
+        if (tempPushAxis.lengthSq() > 0.001) {
+          tempKnockbackCand.copy(z.dirLocal).applyAxisAngle(tempPushAxis, knockbackDist).normalize();
+          var resolvedDir = resolveZombieMove(z, z.dirLocal, tempKnockbackCand, true);
+          z.dirLocal.copy(resolvedDir);
           var zr = radiusAt(z.dirLocal) + 0.35;
           z.mesh.position.copy(z.dirLocal).multiplyScalar(zr);
         }
@@ -1342,6 +1347,32 @@ export function updateCombat(dt) {
     bullet.dirLocal.applyAxisAngle(bullet.travelAxis, bullet.speed * dt);
     var bRadius = radiusAt(bullet.dirLocal) + 0.35 + arcHeight;
     bullet.mesh.position.copy(bullet.dirLocal).multiplyScalar(bRadius);
+
+    // Colisão do projétil contra obstáculos sólidos do cenário
+    if (state.colliders && state.colliders.length > 0) {
+      var hitSolidProp = false;
+      for (var ciB = 0; ciB < state.colliders.length; ciB++) {
+        var colB = state.colliders[ciB];
+        if (!colB.blocksProjectiles) continue;
+        var dotB = bullet.dirLocal.dot(colB.dir);
+        if (dotB < 0.985) continue;
+        if (dotB > colB.cosRad) {
+          hitSolidProp = true;
+          break;
+        }
+      }
+      if (hitSolidProp) {
+        if (bullet.isExplosive) {
+          detonateExplosiveBullet(bullet);
+        } else {
+          triggerDeathDust(bullet.mesh.position, 12);
+        }
+        playHitSound();
+        bullet.active = false;
+        bullet.mesh.visible = false;
+        continue;
+      }
+    }
 
     // Colisão projétil x zumbis
     for (var zi2 = 0; zi2 < state.zombiePool.length; zi2++) {

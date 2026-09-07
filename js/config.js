@@ -45,7 +45,7 @@ export const BIOMES_CONFIG = {
     baseColor: 0x424245,
     secondaryColor: 0x545458,
     cliffColor: 0x2e2e30,
-    propDensity: 0.85
+    propDensity: 0.47
   },
   forest: {
     id: "forest",
@@ -54,7 +54,7 @@ export const BIOMES_CONFIG = {
     baseColor: 0x34281e,
     secondaryColor: 0x443628,
     cliffColor: 0x241c15,
-    propDensity: 1.10
+    propDensity: 0.56
   },
   industrial: {
     id: "industrial",
@@ -63,7 +63,7 @@ export const BIOMES_CONFIG = {
     baseColor: 0x5c4a3e,
     secondaryColor: 0x4a3d34,
     cliffColor: 0x382c25,
-    propDensity: 1.35
+    propDensity: 0.65
   },
   desert: {
     id: "desert",
@@ -72,7 +72,7 @@ export const BIOMES_CONFIG = {
     baseColor: 0xa6a092,
     secondaryColor: 0x918a7c,
     cliffColor: 0x6e685c,
-    propDensity: 0.40
+    propDensity: 0.30
   },
   swamp: {
     id: "swamp",
@@ -81,7 +81,7 @@ export const BIOMES_CONFIG = {
     baseColor: 0x3e4a2e,
     secondaryColor: 0x4f6336,
     cliffColor: 0x28331d,
-    propDensity: 0.90
+    propDensity: 0.48
   },
   frozen: {
     id: "frozen",
@@ -90,7 +90,7 @@ export const BIOMES_CONFIG = {
     baseColor: 0xc2cbd6,
     secondaryColor: 0xb0bcc9,
     cliffColor: 0x7a8794,
-    propDensity: 0.75
+    propDensity: 0.43
   }
 };
 
@@ -201,7 +201,8 @@ export const CAM_PITCH_DEFAULT = 24.0 * (Math.PI / 180.0);
 // ==========================================
 // 4. ELEMENTOS DE CENÁRIO (PROPS) E LIMITES
 // ==========================================
-export const PROP_CANDIDATES = 2400;
+export const PROP_CANDIDATES = 1500;
+export const MIN_PROP_GAP = 1.6 / PLANET_BASE_RADIUS;
 
 // Limites de InstancedMesh para os 6 Biomas
 export const MAX_HOUSES = 60;
@@ -369,6 +370,39 @@ export const INITIAL_ZOMBIES_COUNT = 12;
 export const ZOMBIE_HIT_FLASH_DURATION = 0.08;
 export const ZOMBIE_DIE_DURATION = 0.8;
 export const ZOMBIE_ATTACK_RADIUS = 0.045; // radianos na esfera (~1 unidade)
+
+// Raios angulares efetivos do corpo por tipo de zumbi (na esfera R=22)
+export const ZOMBIE_BODY_RADII = {
+  common: 0.026,
+  runner: 0.022,
+  tank: 0.038,
+  spitter: 0.026,
+  swarm: 0.016,
+  armored: 0.032,
+  screamer: 0.024,
+  crawler: 0.026,
+  boss: 0.052,
+  butcher: 0.064,
+  default: 0.026
+};
+
+// Lista de ângulos de desvio para contorno de obstáculos (±20°, ±40°, ±65°, ±90°)
+export const ZOMBIE_AVOIDANCE_ANGLES = [
+  (20 * Math.PI) / 180,
+  (-20 * Math.PI) / 180,
+  (40 * Math.PI) / 180,
+  (-40 * Math.PI) / 180,
+  (65 * Math.PI) / 180,
+  (-65 * Math.PI) / 180,
+  (90 * Math.PI) / 180,
+  (-90 * Math.PI) / 180
+];
+
+// Tipos de obstáculos pequenos que o Carniceiro em investida ignora/atropela
+export const BUTCHER_TRAMPLE_COLLIDER_TYPES = ["stump", "log", "swamplog", "bone", "barrel"];
+
+// Pré-filtro largo rápido para descarte imediato de colliders distantes
+export const ZOMBIE_COLLIDER_PREFILTER_DOT = 0.985;
 
 export const BASE_SPAWN_INTERVAL = 0.68;
 export const MIN_SPAWN_INTERVAL = 0.14;

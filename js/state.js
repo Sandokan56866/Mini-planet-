@@ -125,6 +125,7 @@ export const state = {
   propsList: [],
   zombiePool: [],
   spitPool: [],
+  acidPuddles: [],
   screamerWaves: [],
   poolsByType: {},
   bulletPool: [],

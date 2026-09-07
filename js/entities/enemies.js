@@ -52,7 +52,11 @@ import {
   BUTCHER_CHARGE_SPEED_MULTIPLIER,
   BUTCHER_SPAWN_SWARM_CHANCE_ON_HIT,
   BOSS_SCALE,
-  BUTCHER_SCALE
+  BUTCHER_SCALE,
+  ZOMBIE_BODY_RADII,
+  ZOMBIE_AVOIDANCE_ANGLES,
+  BUTCHER_TRAMPLE_COLLIDER_TYPES,
+  ZOMBIE_COLLIDER_PREFILTER_DOT
 } from "../config.js";
 import { state } from "../state.js";
 import { getRawElevation, radiusAt } from "../core/math.js";
@@ -67,12 +71,93 @@ var zRotMatrix = new THREE.Matrix4();
 var zTargetQuat = new THREE.Quaternion();
 var zModelOffsetQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), ZOMBIE_MODEL_ROTATION_Y_OFFSET);
 
-// Vetores reutilizáveis para colisão dos zumbis com props do cenário (evita GC e alocações por frame)
-var zCurDir = new THREE.Vector3();
+// Vetores reutilizáveis para resolução de movimento e contorno de obstáculos dos zumbis
 var zCandDir = new THREE.Vector3();
-var zMoveVec = new THREE.Vector3();
-var zResolvedDir = new THREE.Vector3();
-var zToColVec = new THREE.Vector3();
+var zResolveCand = new THREE.Vector3();
+var zResolvedOut = new THREE.Vector3();
+
+// ========================================================
+// RESOLUÇÃO DE COLISÃO E CONTORNO CONTRA PROPS DO CENÁRIO
+// ========================================================
+function getZombieBodyRadius(z) {
+  if (z.type === "boss") {
+    if (z.bossSubtype === "butcher" || z.isButcher) return ZOMBIE_BODY_RADII.butcher;
+    return ZOMBIE_BODY_RADII.boss;
+  }
+  return ZOMBIE_BODY_RADII[z.type] || ZOMBIE_BODY_RADII.default;
+}
+
+function isDirectionBlocked(z, testDir) {
+  if (!state.colliders || state.colliders.length === 0) return false;
+
+  var bodyRad = getZombieBodyRadius(z);
+  var isButcherCharging = (z.type === "boss" && (z.bossSubtype === "butcher" || z.isButcher) && z.chargeState === "charge");
+
+  for (var i = 0; i < state.colliders.length; i++) {
+    var col = state.colliders[i];
+    var dot = testDir.dot(col.dir);
+    // Pré-filtro largo rápido como primeira linha de descarte
+    if (dot < ZOMBIE_COLLIDER_PREFILTER_DOT) continue;
+
+    // Carniceiro em investida ignora/atropela pequenos obstáculos
+    if (isButcherCharging && BUTCHER_TRAMPLE_COLLIDER_TYPES.indexOf(col.type) !== -1) {
+      continue;
+    }
+
+    var colAngRad = col.angRad !== undefined ? col.angRad : Math.acos(Math.max(-1, Math.min(1, col.cosRad || 0.99)));
+    var totalAngRad = colAngRad + bodyRad;
+    var minCos = Math.cos(totalAngRad);
+
+    if (dot > minCos) {
+      return true; // Bloqueado
+    }
+  }
+
+  return false; // Desimpedido
+}
+
+export function resolveZombieMove(z, currentDir, desiredDir, forceCheck = false) {
+  if (!state.colliders || state.colliders.length === 0) {
+    return zResolvedOut.copy(desiredDir);
+  }
+
+  var isCheckFrame = forceCheck || ((state.frameCount + (z.frameOffset || 0)) % 2 === 0);
+
+  if (isCheckFrame) {
+    // 1. Testa a direção desejada diretamente
+    if (!isDirectionBlocked(z, desiredDir)) {
+      z.lastAvoidAngle = 0;
+      z.lastMoveBlocked = false;
+      return zResolvedOut.copy(desiredDir);
+    }
+
+    // 2. Contorno por tentativa de ângulos: ±20°, ±40°, ±65° e ±90° em torno de currentDir (z.dirLocal)
+    for (var ai = 0; ai < ZOMBIE_AVOIDANCE_ANGLES.length; ai++) {
+      var angle = ZOMBIE_AVOIDANCE_ANGLES[ai];
+      zResolveCand.copy(desiredDir).applyAxisAngle(currentDir, angle).normalize();
+      if (!isDirectionBlocked(z, zResolveCand)) {
+        z.lastAvoidAngle = angle;
+        z.lastMoveBlocked = false;
+        return zResolvedOut.copy(zResolveCand);
+      }
+    }
+
+    // 3. Se todas as tentativas falharem, o zumbi fica parado naquele frame
+    z.lastAvoidAngle = null;
+    z.lastMoveBlocked = true;
+    return zResolvedOut.copy(currentDir);
+  } else {
+    // Frames intermediários: reaproveita a última direção/ângulo resolvido
+    if (z.lastMoveBlocked) {
+      return zResolvedOut.copy(currentDir);
+    }
+    if (z.lastAvoidAngle !== undefined && z.lastAvoidAngle !== null && z.lastAvoidAngle !== 0) {
+      zResolveCand.copy(desiredDir).applyAxisAngle(currentDir, z.lastAvoidAngle).normalize();
+      return zResolvedOut.copy(zResolveCand);
+    }
+    return zResolvedOut.copy(desiredDir);
+  }
+}
 
 // Raycaster reutilizável para determinação exata da elevação no terreno
 var zRaycaster = new THREE.Raycaster();
@@ -522,7 +607,8 @@ function createZombieMesh(type) {
     walkPhase: 0,
     phaseOffset: Math.random() * Math.PI * 2,
     frameOffset: Math.floor(Math.random() * 8),
-    blockedCol: null,
+    lastAvoidAngle: 0,
+    lastMoveBlocked: false,
     surfaceRadius: PLANET_BASE_RADIUS,
     targetRadius: PLANET_BASE_RADIUS,
     isTargetVisual: false,
@@ -718,6 +804,59 @@ function triggerScreamerWave(posDir) {
   wave.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), posDir);
 }
 
+function initAcidPuddles() {
+  state.acidPuddles = [];
+  var puddleGeom = new THREE.CircleGeometry(0.24, 16);
+  var puddleMat = new THREE.MeshBasicMaterial({
+    color: 0x4ade80,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.75,
+    depthWrite: false
+  });
+
+  for (var i = 0; i < 16; i++) {
+    var puddleMesh = new THREE.Mesh(puddleGeom, puddleMat.clone());
+    puddleMesh.visible = false;
+    puddleMesh.renderOrder = 2;
+    state.planetGroup.add(puddleMesh);
+    state.acidPuddles.push({
+      mesh: puddleMesh,
+      active: false,
+      timer: 0,
+      maxLife: 3.5,
+      dirLocal: new THREE.Vector3()
+    });
+  }
+}
+
+function createAcidPuddle(posDir) {
+  var pool = state.acidPuddles || [];
+  var puddle = null;
+  for (var i = 0; i < pool.length; i++) {
+    if (!pool[i].active) {
+      puddle = pool[i];
+      break;
+    }
+  }
+  if (!puddle && pool.length > 0) {
+    puddle = pool[0];
+  }
+  if (!puddle) return;
+
+  puddle.active = true;
+  puddle.timer = 0;
+  puddle.maxLife = 3.5;
+  puddle.dirLocal.copy(posDir);
+  puddle.mesh.visible = true;
+  puddle.mesh.material.opacity = 0.75;
+  puddle.mesh.scale.set(1, 1, 1);
+
+  var r = radiusAt(posDir) + 0.04;
+  puddle.mesh.position.copy(posDir).multiplyScalar(r);
+  puddle.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), posDir);
+}
+
 // ==========================================
 // 5. INICIALIZAÇÃO E POOLS SEPARADOS POR TIPO
 // ==========================================
@@ -748,6 +887,15 @@ export function cleanUpEnemies() {
       }
     }
     state.screamerWaves.length = 0;
+  }
+  if (state.acidPuddles && state.acidPuddles.length > 0) {
+    for (var a = 0; a < state.acidPuddles.length; a++) {
+      var ap = state.acidPuddles[a];
+      if (ap && ap.mesh) {
+        disposeHierarchy(ap.mesh);
+      }
+    }
+    state.acidPuddles.length = 0;
   }
   state.poolsByType = {
     common: [],
@@ -807,6 +955,7 @@ export function initEnemies() {
 
   initSpitPool();
   initScreamerWave();
+  initAcidPuddles();
 
   // Spawna a leva inicial de abertura na onda 1
   for (var k = 0; k < INITIAL_ZOMBIES_COUNT; k++) {
@@ -1003,7 +1152,8 @@ function spawnSingleZombie(candidateDir, targetType, isBoss, typeOverride) {
   freeZombie.windupTimer = 0;
   freeZombie.chargeTimer = 0;
   freeZombie.restTimer = 0;
-  freeZombie.blockedCol = null;
+  freeZombie.lastAvoidAngle = 0;
+  freeZombie.lastMoveBlocked = false;
 
   var spawnRadius = getTerrainRadiusAtDir(candidateDir, radiusAt(candidateDir));
   freeZombie.surfaceRadius = spawnRadius;
@@ -1129,54 +1279,9 @@ export function updateEnemies(dt) {
       if (shouldSkipAnim) {
         zAxis.crossVectors(z.dirLocal, state.playerLocalDir).normalize();
         if (zAxis.lengthSq() > 0.0001) {
-          zCurDir.copy(z.dirLocal);
           zCandDir.copy(z.dirLocal).applyAxisAngle(zAxis, z.speed * dt).normalize();
-          zMoveVec.copy(zCandDir).sub(zCurDir);
-          zResolvedDir.copy(zCandDir);
-
-          if (state.colliders && state.colliders.length > 0) {
-            var shouldCheckCollidersDistant = ((state.frameCount + z.frameOffset) % 3 === 0);
-            if (shouldCheckCollidersDistant) {
-              z.blockedCol = null;
-              for (var ciD = 0; ciD < state.colliders.length; ciD++) {
-                var colD = state.colliders[ciD];
-                var dotCandD = zResolvedDir.dot(colD.dir);
-                if (dotCandD < 0.985) continue;
-
-                if (dotCandD > colD.cosRad) {
-                  zToColVec.copy(colD.dir).addScaledVector(zCurDir, -colD.dir.dot(zCurDir));
-                  var toColLenD = zToColVec.length();
-                  if (toColLenD > 0.00001) {
-                    zToColVec.divideScalar(toColLenD);
-                    var projD = zMoveVec.dot(zToColVec);
-                    if (projD > 0) {
-                      zMoveVec.addScaledVector(zToColVec, -projD);
-                      zResolvedDir.copy(zCurDir).add(zMoveVec).normalize();
-                      z.blockedCol = colD;
-                    }
-                  }
-                }
-              }
-            } else if (z.blockedCol) {
-              var colD = z.blockedCol;
-              var dotCandD = zResolvedDir.dot(colD.dir);
-              if (dotCandD > colD.cosRad) {
-                zToColVec.copy(colD.dir).addScaledVector(zCurDir, -colD.dir.dot(zCurDir));
-                var toColLenD = zToColVec.length();
-                if (toColLenD > 0.00001) {
-                  zToColVec.divideScalar(toColLenD);
-                  var projD = zMoveVec.dot(zToColVec);
-                  if (projD > 0) {
-                    zMoveVec.addScaledVector(zToColVec, -projD);
-                    zResolvedDir.copy(zCurDir).add(zMoveVec).normalize();
-                  }
-                }
-              } else {
-                z.blockedCol = null;
-              }
-            }
-          }
-          z.dirLocal.copy(zResolvedDir);
+          var resolvedDir = resolveZombieMove(z, z.dirLocal, zCandDir);
+          z.dirLocal.copy(resolvedDir);
         }
         z.mesh.position.copy(z.dirLocal).multiplyScalar(z.surfaceRadius);
         continue;
@@ -1353,8 +1458,10 @@ export function updateEnemies(dt) {
     // ========================================================
     if (!isSpitterHolding) {
       if (isButcherCharging && z.chargeTravelAxis.lengthSq() > 0.001) {
-        // O chefe Carniceiro em investida ignora colliders (ele atropela)
-        z.dirLocal.applyAxisAngle(z.chargeTravelAxis, effectiveSpeed * dt).normalize();
+        // Ponto 2: Investida do Carniceiro (com exceção de atropelar pequenos obstáculos tratada em resolveZombieMove)
+        zCandDir.copy(z.dirLocal).applyAxisAngle(z.chargeTravelAxis, effectiveSpeed * dt).normalize();
+        var resolvedDir = resolveZombieMove(z, z.dirLocal, zCandDir);
+        z.dirLocal.copy(resolvedDir);
       } else {
         zAxis.crossVectors(z.dirLocal, state.playerLocalDir).normalize();
         if (z.type === "swarm") {
@@ -1362,58 +1469,10 @@ export function updateEnemies(dt) {
           zAxis.applyAxisAngle(z.dirLocal, Math.sin(phase * 1.8) * 0.25);
         }
         if (zAxis.lengthSq() > 0.0001) {
-          // Direção candidata do movimento
-          zCurDir.copy(z.dirLocal);
+          // Ponto 3: Caminhada normal e avanço alternativo
           zCandDir.copy(z.dirLocal).applyAxisAngle(zAxis, effectiveSpeed * dt).normalize();
-          zMoveVec.copy(zCandDir).sub(zCurDir);
-          zResolvedDir.copy(zCandDir);
-
-          // Colisão com obstáculos do relevo e deslizamento tangencial
-          if (state.colliders && state.colliders.length > 0) {
-            var shouldCheckColliders = ((state.frameCount + z.frameOffset) % 3 === 0);
-            if (shouldCheckColliders) {
-              z.blockedCol = null;
-              for (var ci = 0; ci < state.colliders.length; ci++) {
-                var col = state.colliders[ci];
-                var dotCandidate = zResolvedDir.dot(col.dir);
-                if (dotCandidate < 0.985) continue;
-
-                if (dotCandidate > col.cosRad) {
-                  zToColVec.copy(col.dir).addScaledVector(zCurDir, -col.dir.dot(zCurDir));
-                  var toColLen = zToColVec.length();
-                  if (toColLen > 0.00001) {
-                    zToColVec.divideScalar(toColLen);
-                    var proj = zMoveVec.dot(zToColVec);
-                    if (proj > 0) {
-                      zMoveVec.addScaledVector(zToColVec, -proj);
-                      zResolvedDir.copy(zCurDir).add(zMoveVec).normalize();
-                      z.blockedCol = col;
-                    }
-                  }
-                }
-              }
-            } else if (z.blockedCol) {
-              // Frames intermediários: teste pontual apenas contra o obstáculo ativo para manter fluidez
-              var col = z.blockedCol;
-              var dotCandidate = zResolvedDir.dot(col.dir);
-              if (dotCandidate > col.cosRad) {
-                zToColVec.copy(col.dir).addScaledVector(zCurDir, -col.dir.dot(zCurDir));
-                var toColLen = zToColVec.length();
-                if (toColLen > 0.00001) {
-                  zToColVec.divideScalar(toColLen);
-                  var proj = zMoveVec.dot(zToColVec);
-                  if (proj > 0) {
-                    zMoveVec.addScaledVector(zToColVec, -proj);
-                    zResolvedDir.copy(zCurDir).add(zMoveVec).normalize();
-                  }
-                }
-              } else {
-                z.blockedCol = null;
-              }
-            }
-          }
-
-          z.dirLocal.copy(zResolvedDir);
+          var resolvedDir = resolveZombieMove(z, z.dirLocal, zCandDir);
+          z.dirLocal.copy(resolvedDir);
         }
       }
     }
@@ -1464,8 +1523,11 @@ export function updateEnemies(dt) {
         state.ui.showGameOverModal?.();
       }
 
-      // Repulsão pós-ataque
-      z.dirLocal.applyAxisAngle(zAxis, -0.04);
+      // Ponto 4: Repulsão de desempilhamento pós-ataque
+      zCandDir.copy(z.dirLocal).applyAxisAngle(zAxis, -0.04).normalize();
+      var resolvedRepulsion = resolveZombieMove(z, z.dirLocal, zCandDir, true);
+      z.dirLocal.copy(resolvedRepulsion);
+      z.mesh.position.copy(z.dirLocal).multiplyScalar(z.surfaceRadius);
     }
   }
 
@@ -1485,6 +1547,28 @@ export function updateEnemies(dt) {
     var spitR = radiusAt(spit.dirLocal) + 0.35 + arcHeight;
     spit.mesh.position.copy(spit.dirLocal).multiplyScalar(spitR);
 
+    // Colisão do cuspe contra obstáculos sólidos do cenário (props altos)
+    if (state.colliders && state.colliders.length > 0) {
+      var hitSolidProp = false;
+      for (var ciS = 0; ciS < state.colliders.length; ciS++) {
+        var colS = state.colliders[ciS];
+        if (!colS.blocksProjectiles) continue;
+        var dotS = spit.dirLocal.dot(colS.dir);
+        if (dotS < 0.985) continue;
+        if (dotS > colS.cosRad) {
+          hitSolidProp = true;
+          break;
+        }
+      }
+      if (hitSolidProp) {
+        spit.active = false;
+        spit.mesh.visible = false;
+        createAcidPuddle(spit.dirLocal);
+        playSpitHitSound();
+        continue;
+      }
+    }
+
     // Colisão do projétil de cuspe com o jogador
     var sDotP = spit.dirLocal.dot(state.playerLocalDir);
     var sDistAng = Math.acos(Math.max(-1, Math.min(1, sDotP)));
@@ -1492,6 +1576,7 @@ export function updateEnemies(dt) {
     if (sDistAng < 0.050 && !state.isGameOver) {
       spit.active = false;
       spit.mesh.visible = false;
+      createAcidPuddle(spit.dirLocal);
       state.playerHp -= SPITTER_PROJECTILE_DAMAGE;
       state.ui.triggerDamageFlash?.();
       state.camShake += 0.035;
@@ -1508,7 +1593,30 @@ export function updateEnemies(dt) {
     if (travelPct >= 1.0) {
       spit.active = false;
       spit.mesh.visible = false;
+      createAcidPuddle(spit.dirLocal);
     }
+  }
+
+  // ========================================================
+  // ATUALIZAÇÃO DAS POÇAS DE ÁCIDO NO SOLO
+  // ========================================================
+  var activePuddles = state.acidPuddles || [];
+  for (var api = 0; api < activePuddles.length; api++) {
+    var ap = activePuddles[api];
+    if (!ap.active) continue;
+
+    ap.timer += dt;
+    var pPct = ap.timer / (ap.maxLife || 3.5);
+    if (pPct >= 1.0) {
+      ap.active = false;
+      ap.mesh.visible = false;
+      continue;
+    }
+
+    var fade = Math.max(0, 1.0 - pPct);
+    ap.mesh.material.opacity = 0.75 * fade;
+    var pScale = 1.0 + Math.sin(pPct * Math.PI) * 0.12;
+    ap.mesh.scale.set(pScale, pScale, 1.0);
   }
 
   // ========================================================

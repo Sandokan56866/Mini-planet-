@@ -56,7 +56,12 @@ import {
   ZOMBIE_BODY_RADII,
   ZOMBIE_AVOIDANCE_ANGLES,
   BUTCHER_TRAMPLE_COLLIDER_TYPES,
-  ZOMBIE_COLLIDER_PREFILTER_DOT
+  ZOMBIE_COLLIDER_PREFILTER_DOT,
+  ZOMBIE_STUCK_TIME_THRESHOLD,
+  ZOMBIE_STUCK_MIN_TRAVEL,
+  ZOMBIE_UNSTUCK_MAX_DISTANCE,
+  ZOMBIE_UNSTUCK_MAX_ANG_RAD,
+  ZOMBIE_SAFE_SPAWN_ATTEMPTS
 } from "../config.js";
 import { state } from "../state.js";
 import { getRawElevation, radiusAt } from "../core/math.js";
@@ -157,6 +162,122 @@ export function resolveZombieMove(z, currentDir, desiredDir, forceCheck = false)
     }
     return zResolvedOut.copy(desiredDir);
   }
+}
+
+// ========================================================
+// REPOSICIONAMENTO SEGURO E DESTRAVAMENTO CONTRA OBSTÁCULOS
+// ========================================================
+export function findClosestFreeDirection(baseDir, z, maxAngRad) {
+  if (!state.colliders || state.colliders.length === 0) {
+    return baseDir.clone();
+  }
+
+  var limitAng = maxAngRad || ZOMBIE_UNSTUCK_MAX_ANG_RAD;
+  var bodyRad = getZombieBodyRadius(z);
+
+  // 1. Tenta empurrar diretamente para fora de qualquer collider que contenha ou encoste em baseDir
+  var bestDir = null;
+  var bestDist = Infinity;
+
+  for (var c = 0; c < state.colliders.length; c++) {
+    var col = state.colliders[c];
+    var dot = baseDir.dot(col.dir);
+    if (dot < ZOMBIE_COLLIDER_PREFILTER_DOT) continue;
+
+    var colAngRad = col.angRad !== undefined ? col.angRad : Math.acos(Math.max(-1, Math.min(1, col.cosRad || 0.99)));
+    var totalAngRad = colAngRad + bodyRad;
+
+    // Se baseDir estiver dentro ou muito próximo da borda deste collider
+    if (dot > Math.cos(totalAngRad + 0.02)) {
+      var pushAxis = new THREE.Vector3().crossVectors(col.dir, baseDir);
+      if (pushAxis.lengthSq() < 1e-6) {
+        var ortho = Math.abs(col.dir.x) > 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+        pushAxis.crossVectors(col.dir, ortho);
+      }
+      pushAxis.normalize();
+
+      // Posição além da borda externa com margem de segurança
+      var safePushDir = col.dir.clone().applyAxisAngle(pushAxis, totalAngRad + 0.03).normalize();
+      var angDist = Math.acos(Math.max(-1, Math.min(1, baseDir.dot(safePushDir))));
+
+      if (angDist <= limitAng && getRawElevation(safePushDir) >= SEA_LEVEL && !isDirectionBlocked(z, safePushDir)) {
+        if (angDist < bestDist) {
+          bestDist = angDist;
+          bestDir = safePushDir.clone();
+        }
+      }
+    }
+  }
+
+  if (bestDir) {
+    return bestDir;
+  }
+
+  // 2. Busca radial em anéis concêntricos em torno de baseDir
+  var orthoRef = Math.abs(baseDir.x) > 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+  var tX = new THREE.Vector3().crossVectors(baseDir, orthoRef).normalize();
+  var tY = new THREE.Vector3().crossVectors(baseDir, tX).normalize();
+  var sampleDir = new THREE.Vector3();
+
+  var ringDistances = [0.035, 0.065, 0.095, 0.125, limitAng];
+  for (var r = 0; r < ringDistances.length; r++) {
+    var ringDist = ringDistances[r];
+    if (ringDist > limitAng) continue;
+
+    for (var a = 0; a < 16; a++) {
+      var angle = (a / 16) * Math.PI * 2;
+      sampleDir.copy(baseDir)
+        .addScaledVector(tX, Math.cos(angle) * ringDist)
+        .addScaledVector(tY, Math.sin(angle) * ringDist)
+        .normalize();
+
+      if (getRawElevation(sampleDir) >= SEA_LEVEL && !isDirectionBlocked(z, sampleDir)) {
+        var d = Math.acos(Math.max(-1, Math.min(1, baseDir.dot(sampleDir))));
+        if (d < bestDist) {
+          bestDist = d;
+          bestDir = sampleDir.clone();
+        }
+      }
+    }
+    if (bestDir) {
+      return bestDir;
+    }
+  }
+
+  return baseDir.clone();
+}
+
+export function getSafeSpawnDir(candidateDir, z) {
+  if (!state.colliders || state.colliders.length === 0) {
+    return candidateDir.clone();
+  }
+
+  // Se o candidato inicial não colide e está acima da água, aceita diretamente
+  if (!isDirectionBlocked(z, candidateDir) && getRawElevation(candidateDir) >= SEA_LEVEL) {
+    return candidateDir.clone();
+  }
+
+  var testDir = new THREE.Vector3();
+  var randAxis = new THREE.Vector3();
+
+  // Sorteia outra direção, até 8 tentativas
+  for (var attempt = 1; attempt <= ZOMBIE_SAFE_SPAWN_ATTEMPTS; attempt++) {
+    if (attempt < ZOMBIE_SAFE_SPAWN_ATTEMPTS) {
+      // Tentativas 1 a 7: sorteia nova direção com espalhamento angular progressivo
+      randAxis.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+      var spread = 0.05 + attempt * 0.03; // ~0.08 a ~0.23 radianos
+      testDir.copy(candidateDir).applyAxisAngle(randAxis, spread).normalize();
+
+      if (getRawElevation(testDir) >= SEA_LEVEL && !isDirectionBlocked(z, testDir)) {
+        return testDir.clone();
+      }
+    } else {
+      // Na 8ª tentativa (última): aceita a direção livre mais próxima fora de qualquer collider
+      return findClosestFreeDirection(candidateDir, z, ZOMBIE_UNSTUCK_MAX_ANG_RAD * 1.5);
+    }
+  }
+
+  return candidateDir.clone();
 }
 
 // Raycaster reutilizável para determinação exata da elevação no terreno
@@ -614,6 +735,17 @@ function createZombieMesh(type) {
     isTargetVisual: false,
     hasCastShadow: false,
     state: "walk",
+    // Mecanismo de segurança contra travamento em obstáculos
+    accumTravelAngle: 0,
+    stuckTimer: 0,
+    lastDirSample: new THREE.Vector3(),
+    isUnstucking: false,
+    unstuckStartDir: new THREE.Vector3(),
+    unstuckTargetDir: new THREE.Vector3(),
+    unstuckStartRadius: PLANET_BASE_RADIUS,
+    unstuckTargetRadius: PLANET_BASE_RADIUS,
+    unstuckElapsed: 0,
+    unstuckDuration: 0.35,
     // Comportamento do Cuspidor
     spitCooldown: 1.5 + Math.random() * 2.0,
     isSpitWindingUp: false,
@@ -963,13 +1095,17 @@ export function initEnemies() {
   }
 }
 
-// Spawna um grupo compacto de enxames (5 a 8 unidades juntas)
+// Spawna um grupo compacto de enxames (5 a 8 unidades juntas) com spawn seguro
 function spawnSwarmGroup(centerDir, count) {
+  var dummySwarm = { type: "swarm" };
+  var safeCenter = getSafeSpawnDir(centerDir, dummySwarm);
+
   for (var i = 0; i < count; i++) {
-    var offsetDir = centerDir.clone();
+    var offsetDir = safeCenter.clone();
     var jitterAxis = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
-    offsetDir.applyAxisAngle(jitterAxis, (Math.random() * 0.08));
-    spawnSingleZombie(offsetDir, "swarm", false);
+    offsetDir.applyAxisAngle(jitterAxis, (Math.random() * 0.08)).normalize();
+    var safeOffset = getSafeSpawnDir(offsetDir, dummySwarm);
+    spawnSingleZombie(safeOffset, "swarm", false);
   }
 }
 
@@ -1128,7 +1264,15 @@ function spawnSingleZombie(candidateDir, targetType, isBoss, typeOverride) {
   freeZombie.active = true;
   freeZombie.type = targetType;
   freeZombie.isReinforced = isReinforced;
-  freeZombie.dirLocal.copy(candidateDir);
+
+  // Validação segura contra state.colliders antes de aceitar a posição de spawn
+  var safeSpawnDir = getSafeSpawnDir(candidateDir, freeZombie);
+  freeZombie.dirLocal.copy(safeSpawnDir);
+  freeZombie.accumTravelAngle = 0;
+  freeZombie.stuckTimer = 0;
+  freeZombie.lastDirSample.copy(safeSpawnDir);
+  freeZombie.isUnstucking = false;
+
   freeZombie.state = "walk";
   freeZombie.dieTimer = 0;
   freeZombie.flashTimer = 0;
@@ -1155,7 +1299,7 @@ function spawnSingleZombie(candidateDir, targetType, isBoss, typeOverride) {
   freeZombie.lastAvoidAngle = 0;
   freeZombie.lastMoveBlocked = false;
 
-  var spawnRadius = getTerrainRadiusAtDir(candidateDir, radiusAt(candidateDir));
+  var spawnRadius = getTerrainRadiusAtDir(freeZombie.dirLocal, radiusAt(freeZombie.dirLocal));
   freeZombie.surfaceRadius = spawnRadius;
   freeZombie.targetRadius = spawnRadius;
   freeZombie.isTargetVisual = false;
@@ -1262,6 +1406,36 @@ export function updateEnemies(dt) {
       if (z.flashTimer <= 0) applyZombieTypeStyles(z);
     }
 
+    // Mecanismo de segurança: reposicionamento suave para zumbis destravados
+    if (z.isUnstucking) {
+      z.unstuckElapsed += dt;
+      var t = Math.min(1.0, z.unstuckElapsed / z.unstuckDuration);
+      var smoothT = t * t * (3 - 2 * t);
+
+      z.dirLocal.copy(z.unstuckStartDir).lerp(z.unstuckTargetDir, smoothT).normalize();
+      z.surfaceRadius = THREE.MathUtils.lerp(z.unstuckStartRadius, z.unstuckTargetRadius, smoothT);
+      z.mesh.position.copy(z.dirLocal).multiplyScalar(z.surfaceRadius);
+
+      // Mantém orientação coerente com a superfície e encarando o sobrevivente
+      zUp.copy(z.dirLocal).normalize();
+      zForward.copy(state.playerLocalDir).addScaledVector(zUp, -state.playerLocalDir.dot(zUp));
+      if (zForward.lengthSq() < 1e-6) zForward.set(0, 0, 1).addScaledVector(zUp, -zUp.z);
+      zForward.normalize();
+      zRight.crossVectors(zUp, zForward).normalize();
+      zRotMatrix.makeBasis(zRight, zUp, zForward);
+      zTargetQuat.setFromRotationMatrix(zRotMatrix);
+      if (ZOMBIE_MODEL_ROTATION_Y_OFFSET !== 0) zTargetQuat.multiply(zModelOffsetQuat);
+      z.mesh.quaternion.copy(zTargetQuat);
+
+      if (t >= 1.0) {
+        z.isUnstucking = false;
+        z.lastDirSample.copy(z.dirLocal);
+        z.accumTravelAngle = 0;
+        z.stuckTimer = 0;
+      }
+      continue;
+    }
+
     // Boost temporário de velocidade concedido pelo chamado do Ululante
     if (z.speedBoostTimer > 0) {
       z.speedBoostTimer -= dt;
@@ -1284,6 +1458,9 @@ export function updateEnemies(dt) {
           z.dirLocal.copy(resolvedDir);
         }
         z.mesh.position.copy(z.dirLocal).multiplyScalar(z.surfaceRadius);
+        var stepDistSkip = Math.acos(Math.max(-1, Math.min(1, z.dirLocal.dot(z.lastDirSample))));
+        z.accumTravelAngle += stepDistSkip;
+        z.lastDirSample.copy(z.dirLocal);
         continue;
       }
     }
@@ -1496,6 +1673,41 @@ export function updateEnemies(dt) {
     zTargetQuat.setFromRotationMatrix(zRotMatrix);
     if (ZOMBIE_MODEL_ROTATION_Y_OFFSET !== 0) zTargetQuat.multiply(zModelOffsetQuat);
     z.mesh.quaternion.slerp(zTargetQuat, ZOMBIE_ROTATION_SLERP_FACTOR);
+
+    // Acumula a distância angular percorrida no frame
+    var stepDist = Math.acos(Math.max(-1, Math.min(1, z.dirLocal.dot(z.lastDirSample))));
+    z.accumTravelAngle += stepDist;
+    z.lastDirSample.copy(z.dirLocal);
+
+    // Destravamento por inatividade ao longo de 2,5 segundos
+    var isIntentionallyStationary = isSpitterHolding || z.isScreaming ||
+      (z.type === "boss" && z.bossSubtype === "butcher" && (z.chargeState === "windup" || z.chargeState === "rest"));
+
+    if (isIntentionallyStationary) {
+      z.stuckTimer = 0;
+      z.accumTravelAngle = 0;
+    } else {
+      z.stuckTimer += dt;
+      if (z.stuckTimer >= ZOMBIE_STUCK_TIME_THRESHOLD) {
+        if (z.accumTravelAngle < ZOMBIE_STUCK_MIN_TRAVEL) {
+          // Zumbi preso! Reposiciona suavemente para a direção livre mais próxima fora de qualquer collider
+          var freeUnstuckDir = findClosestFreeDirection(z.dirLocal, z, ZOMBIE_UNSTUCK_MAX_ANG_RAD);
+          var angDiff = Math.acos(Math.max(-1, Math.min(1, z.dirLocal.dot(freeUnstuckDir))));
+
+          if (angDiff > 0.005) {
+            z.isUnstucking = true;
+            z.unstuckElapsed = 0;
+            z.unstuckDuration = 0.35;
+            z.unstuckStartDir.copy(z.dirLocal);
+            z.unstuckStartRadius = z.surfaceRadius;
+            z.unstuckTargetDir.copy(freeUnstuckDir);
+            z.unstuckTargetRadius = getTerrainRadiusAtDir(freeUnstuckDir, radiusAt(freeUnstuckDir));
+          }
+        }
+        z.accumTravelAngle = 0;
+        z.stuckTimer = 0;
+      }
+    }
 
     // ========================================================
     // DANO POR CONTATO CORPORAL COM O SOBREVIVENTE

@@ -16,7 +16,7 @@ import {
   BOMB_KNOCKBACK,
   INITIAL_BOMBS,
   MAX_BOMBS,
-  DRONE_BASE_DURATION,
+  DRONE_TYPES,
   DRONE_BASE_DAMAGE,
   DRONE_BASE_FIRE_RATE,
   DRONE_RANGE,
@@ -565,16 +565,19 @@ var bombMat = new THREE.MeshLambertMaterial({ color: 0x1e293b, emissive: 0xf9731
 // ==========================================
 // 5.1 COMPANION DRONE E LÂMINAS ORBITAIS
 // ==========================================
-function createDroneCompanionMesh() {
+export function createDroneCompanionMesh(tipo) {
+  var droneType = tipo || state.droneType || "sentinela";
+  var dCfg = DRONE_TYPES[droneType] || DRONE_TYPES.sentinela;
+
   var droneGroup = new THREE.Group();
 
-  // Chassi central
-  var bodyMat = new THREE.MeshLambertMaterial({ color: 0x0f172a, flatShading: true });
+  // Chassi central (cor por tipo)
+  var bodyMat = new THREE.MeshLambertMaterial({ color: dCfg.bodyColor, flatShading: true });
   var body = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.08, 0.24), bodyMat);
   droneGroup.add(body);
 
-  // Visor frontal ciano brilhante
-  var eyeMat = new THREE.MeshBasicMaterial({ color: 0x06b6d4 });
+  // Visor frontal luminoso (cor por tipo)
+  var eyeMat = new THREE.MeshBasicMaterial({ color: dCfg.eyeColor });
   var eye = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 8), eyeMat);
   eye.position.set(0, 0.02, 0.12);
   droneGroup.add(eye);
@@ -603,16 +606,40 @@ function createDroneCompanionMesh() {
     rotorBlades.push(rotor);
   }
 
-  // Mini metralhadora inferior
-  var gunMat = new THREE.MeshLambertMaterial({ color: 0x0284c7, flatShading: true });
+  // Mini canhão / arma inferior
+  var gunColor = dCfg.gunColor !== undefined ? dCfg.gunColor : dCfg.eyeColor;
+  var gunMat = new THREE.MeshLambertMaterial({ color: gunColor, flatShading: true });
   var gun = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.12, 6), gunMat);
   gun.rotation.x = Math.PI / 2;
   gun.position.set(0, -0.05, 0.06);
   droneGroup.add(gun);
 
   droneGroup.userData.rotorBlades = rotorBlades;
+  droneGroup.userData.bodyMesh = body;
+  droneGroup.userData.eyeMesh = eye;
+  droneGroup.userData.gunMesh = gun;
+  droneGroup.userData.droneType = droneType;
   droneGroup.visible = false;
   return droneGroup;
+}
+
+export function setDroneType(tipo) {
+  if (!DRONE_TYPES[tipo]) return;
+  state.droneType = tipo;
+  var dCfg = DRONE_TYPES[tipo];
+  if (state.droneMesh && state.droneMesh.userData) {
+    if (state.droneMesh.userData.bodyMesh) {
+      state.droneMesh.userData.bodyMesh.material.color.setHex(dCfg.bodyColor);
+    }
+    if (state.droneMesh.userData.eyeMesh) {
+      state.droneMesh.userData.eyeMesh.material.color.setHex(dCfg.eyeColor);
+    }
+    if (state.droneMesh.userData.gunMesh) {
+      state.droneMesh.userData.gunMesh.material.color.setHex(dCfg.gunColor !== undefined ? dCfg.gunColor : dCfg.eyeColor);
+    }
+    state.droneMesh.userData.droneType = tipo;
+  }
+  state.ui.updateDroneIndicatorUI?.();
 }
 
 function createOrbitalBlades() {
@@ -640,17 +667,20 @@ function createOrbitalBlades() {
   return bladesGroup;
 }
 
-export function activateDrone(customDuration) {
-  var durationBonus = (state.upgrades.droneDuration?.level || 0) * 15.0;
-  var dur = (customDuration || DRONE_BASE_DURATION) + durationBonus;
+export function activateDrone(tipo) {
+  if (tipo && DRONE_TYPES[tipo]) {
+    setDroneType(tipo);
+  } else if (!state.droneType) {
+    state.droneType = "sentinela";
+  }
   state.droneActive = true;
-  state.droneTimer = (state.droneTimer > 0) ? state.droneTimer + dur : dur;
   state.droneShootTimer = 0;
   if (state.droneMesh) {
     state.droneMesh.visible = true;
   }
-  state.ui.updateDroneUI?.(state.droneTimer);
-  state.ui.showWeaponNotification?.("🛸 Drone de Combate Ativado (" + Math.round(state.droneTimer) + "s)!");
+  state.ui.updateDroneIndicatorUI?.();
+  var dCfg = DRONE_TYPES[state.droneType] || DRONE_TYPES.sentinela;
+  state.ui.showWeaponNotification?.("🛸 Drone Companheiro Ativado: " + dCfg.name + "!");
 }
 
 export function triggerBomb() {
@@ -759,14 +789,20 @@ export function initCombat() {
   state.maxBombs = MAX_BOMBS;
 
   // Inicializa meshes do Drone Companion e Lâminas Orbitais
+  if (!state.droneType) {
+    state.droneType = "sentinela";
+  }
   if (!state.droneMesh) {
-    state.droneMesh = createDroneCompanionMesh();
+    state.droneMesh = createDroneCompanionMesh(state.droneType);
     state.planetGroup.add(state.droneMesh);
   }
   state.droneActive = false;
-  state.droneTimer = 0;
   state.droneShootTimer = 0;
   state.droneAngle = 0;
+  if (state.droneMesh) {
+    state.droneMesh.visible = false;
+  }
+  state.ui.updateDroneIndicatorUI?.();
 
   if (!state.orbitalBladesGroup) {
     state.orbitalBladesGroup = createOrbitalBlades();
@@ -798,7 +834,8 @@ export function initCombat() {
     showDamagePopup: showDamagePopup,
     triggerDeathDust: triggerDeathDust,
     triggerBomb: triggerBomb,
-    activateDrone: activateDrone
+    activateDrone: activateDrone,
+    setDroneType: setDroneType
   };
 
   // Inicializa baús, orbes de XP, minas, torretas e barreiras
@@ -869,15 +906,20 @@ function detonateExplosiveBullet(bullet) {
   triggerDeathDust(bullet.mesh.position, 20);
 
   var radius = bullet.explosionRadius || 0.14;
+  var splashDmg = (bullet.splashDamage !== undefined && bullet.splashDamage > 0) ? bullet.splashDamage : bullet.damage;
   for (var exZi = 0; exZi < state.zombiePool.length; exZi++) {
     var ez = state.zombiePool[exZi];
     if (!ez.active || ez.state !== "walk" || ez.hp <= 0) continue;
 
     var ezDist = Math.acos(Math.max(-1, Math.min(1, bullet.dirLocal.dot(ez.dirLocal))));
     if (ezDist <= radius) {
-      ez.hp -= bullet.damage;
+      var expDmg = splashDmg;
+      if (ez.markedTimer > 0) {
+        expDmg = Math.round(expDmg * 1.30);
+      }
+      ez.hp -= expDmg;
       ez.flashTimer = 0.1;
-      showDamagePopup(ez.mesh.position, bullet.damage.toString() + "💥", true);
+      showDamagePopup(ez.mesh.position, expDmg.toString() + "💥", true);
 
       if (ez.type === "boss") {
         state.ui.updateBossHp?.(ez.hp, ez.maxHp);
@@ -1132,89 +1174,124 @@ export function updateCombat(dt) {
     }
   }
 
-  // 4.1 ATUALIZAÇÃO DO DRONE COMPANION (ORBITA ACIMA DO JOGADOR E DISPARA TIROS DE PISTOLA)
+  // 4.1 ATUALIZAÇÃO DO DRONE COMPANION PERMANENTE (ORBITA ACIMA DO JOGADOR E DISPARA CONFORME O TIPO)
   if (state.droneActive && state.droneMesh) {
-    state.droneTimer -= dt;
-    state.ui.updateDroneUI?.(state.droneTimer);
+    state.droneMesh.visible = true;
+    state.droneAngle = (state.droneAngle || 0) + dt * DRONE_ORBIT_SPEED;
 
-    if (state.droneTimer <= 0) {
-      state.droneActive = false;
-      state.droneTimer = 0;
-      state.droneMesh.visible = false;
-      state.ui.updateDroneUI?.(0);
-    } else {
-      state.droneMesh.visible = true;
-      state.droneAngle = (state.droneAngle || 0) + dt * DRONE_ORBIT_SPEED;
+    // Animação das hélices
+    var rotors = state.droneMesh.userData.rotorBlades || [];
+    for (var ri = 0; ri < rotors.length; ri++) {
+      rotors[ri].rotation.y += dt * 32.0;
+    }
 
-      // Animação das hélices
-      var rotors = state.droneMesh.userData.rotorBlades || [];
-      for (var ri = 0; ri < rotors.length; ri++) {
-        rotors[ri].rotation.y += dt * 32.0;
+    // Posição orbital acima da cabeça do sobrevivente
+    var pPos = state.characterGroup.position;
+    var upNorm = state.playerLocalDir.clone().normalize();
+    var tangentRef = new THREE.Vector3(0, 1, 0);
+    if (Math.abs(upNorm.dot(tangentRef)) > 0.95) tangentRef.set(1, 0, 0);
+    var rightVec = new THREE.Vector3().crossVectors(upNorm, tangentRef).normalize();
+    var forwardVec = new THREE.Vector3().crossVectors(rightVec, upNorm).normalize();
+
+    var orbitX = Math.cos(state.droneAngle) * DRONE_ORBIT_RADIUS;
+    var orbitZ = Math.sin(state.droneAngle) * DRONE_ORBIT_RADIUS;
+
+    state.droneMesh.position.copy(pPos)
+      .addScaledVector(rightVec, orbitX)
+      .addScaledVector(forwardVec, orbitZ)
+      .addScaledVector(upNorm, DRONE_HEIGHT);
+
+    // Tipo de drone ativo e seus atributos
+    var curDroneType = state.droneType || "sentinela";
+    var dTypeCfg = DRONE_TYPES[curDroneType] || DRONE_TYPES.sentinela;
+
+    // Busca do zumbi vivo mais próximo do drone dentro do alcance específico do tipo
+    state.droneShootTimer = (state.droneShootTimer || 0) - dt;
+    var droneFireRate = dTypeCfg.fireRate / (1.0 + (state.upgrades.droneCadence?.level || 0) * 0.25);
+
+    var nearestZ = null;
+    var nearestZDist = dTypeCfg.range;
+    for (var dzi = 0; dzi < state.zombiePool.length; dzi++) {
+      var dz = state.zombiePool[dzi];
+      if (!dz.active || dz.state !== "walk" || dz.hp <= 0) continue;
+      var dDist = Math.acos(Math.max(-1, Math.min(1, dz.dirLocal.dot(state.playerLocalDir))));
+      if (dDist < nearestZDist) {
+        nearestZDist = dDist;
+        nearestZ = dz;
       }
+    }
 
-      // Posição orbital acima da cabeça do sobrevivente
-      var pPos = state.characterGroup.position;
-      var upNorm = state.playerLocalDir.clone().normalize();
-      var tangentRef = new THREE.Vector3(0, 1, 0);
-      if (Math.abs(upNorm.dot(tangentRef)) > 0.95) tangentRef.set(1, 0, 0);
-      var rightVec = new THREE.Vector3().crossVectors(upNorm, tangentRef).normalize();
-      var forwardVec = new THREE.Vector3().crossVectors(rightVec, upNorm).normalize();
+    if (nearestZ) {
+      state.droneMesh.lookAt(nearestZ.mesh.position);
 
-      var orbitX = Math.cos(state.droneAngle) * DRONE_ORBIT_RADIUS;
-      var orbitZ = Math.sin(state.droneAngle) * DRONE_ORBIT_RADIUS;
-
-      state.droneMesh.position.copy(pPos)
-        .addScaledVector(rightVec, orbitX)
-        .addScaledVector(forwardVec, orbitZ)
-        .addScaledVector(upNorm, DRONE_HEIGHT);
-
-      // Busca do zumbi vivo mais próximo do drone
-      state.droneShootTimer = (state.droneShootTimer || 0) - dt;
-      var droneFireRate = DRONE_BASE_FIRE_RATE / (1.0 + (state.upgrades.droneCadence?.level || 0) * 0.25);
-
-      var nearestZ = null;
-      var nearestZDist = DRONE_RANGE;
-      for (var dzi = 0; dzi < state.zombiePool.length; dzi++) {
-        var dz = state.zombiePool[dzi];
-        if (!dz.active || dz.state !== "walk" || dz.hp <= 0) continue;
-        var dDist = Math.acos(Math.max(-1, Math.min(1, dz.dirLocal.dot(state.playerLocalDir))));
-        if (dDist < nearestZDist) {
-          nearestZDist = dDist;
-          nearestZ = dz;
-        }
-      }
-
-      if (nearestZ) {
-        state.droneMesh.lookAt(nearestZ.mesh.position);
-
-        if (state.droneShootTimer <= 0) {
-          state.droneShootTimer = droneFireRate;
+      if (state.droneShootTimer <= 0) {
+        state.droneShootTimer = droneFireRate;
+        if (curDroneType === "artilheiro") {
+          playShootSound("rifle");
+        } else {
           playShootSound("pistol");
+        }
 
-          // Dispara projétil auxiliar do drone
-          for (var dbi = 0; dbi < state.bulletPool.length; dbi++) {
-            var db = state.bulletPool[dbi];
-            if (!db.active) {
-              var dAimAxis = new THREE.Vector3().crossVectors(state.playerLocalDir, nearestZ.dirLocal).normalize();
-              var dDmg = DRONE_BASE_DAMAGE * (1.0 + (state.upgrades.droneDamage?.level || 0) * 0.35);
+        // Dispara projéteis auxiliares do drone (1 por padrão, +1 por nível de droneCount)
+        var totalDroneShots = 1 + (state.upgrades.droneCount?.level || 0);
+        var shotsFired = 0;
 
-              db.active = true;
-              db.dirLocal.copy(state.playerLocalDir);
-              db.travelAxis.copy(dAimAxis);
-              db.life = 0;
-              db.maxLife = 0.9;
-              db.speed = 1.35;
-              db.damage = Math.max(1, Math.round(dDmg));
-              db.pierceLeft = 0;
-              db.ricochetsLeft = 0;
-              db.isExplosive = false;
-              db.hitZombies = [];
-              db.mesh.material = bulletMat;
-              db.mesh.material.color.setHex(0x38bdf8);
-              db.mesh.scale.set(0.9, 0.9, 0.9);
-              db.mesh.visible = true;
-              break;
+        for (var dbi = 0; dbi < state.bulletPool.length; dbi++) {
+          var db = state.bulletPool[dbi];
+          if (!db.active) {
+            var dAimAxis = new THREE.Vector3().crossVectors(state.playerLocalDir, nearestZ.dirLocal).normalize();
+            if (shotsFired > 0) {
+              // Dispersão leve em leque para drones adicionais do esquadrão
+              var spreadAngle = (shotsFired % 2 === 1 ? 1 : -1) * Math.ceil(shotsFired / 2) * 0.12;
+              dAimAxis.applyAxisAngle(state.playerLocalDir, spreadAngle).normalize();
             }
+            var dDmg = dTypeCfg.damage * (1.0 + (state.upgrades.droneDamage?.level || 0) * 0.35);
+
+            db.active = true;
+            db.dirLocal.copy(state.playerLocalDir);
+            db.travelAxis.copy(dAimAxis);
+            db.life = 0;
+            db.maxLife = 0.9;
+            db.speed = curDroneType === "artilheiro" ? 1.15 : (curDroneType === "batedor" ? 1.50 : 1.35);
+            db.damage = Math.max(1, Math.round(dDmg));
+            db.pierceLeft = 0;
+            db.ricochetsLeft = 0;
+            db.hitZombies = [];
+            db.droneBulletType = curDroneType;
+
+            // Efeitos específicos por tipo
+            if (curDroneType === "artilheiro") {
+              db.isExplosive = true;
+              db.explosionRadius = dTypeCfg.splashRadius || 0.10;
+              db.splashDamage = Math.max(1, Math.round((dTypeCfg.splashDamage || 4) * (1.0 + (state.upgrades.droneDamage?.level || 0) * 0.35)));
+            } else {
+              db.isExplosive = false;
+              db.explosionRadius = 0;
+              db.splashDamage = 0;
+            }
+
+            if (curDroneType === "batedor") {
+              db.isScoutMark = true;
+              db.slowDuration = dTypeCfg.slowDuration || 3.0;
+              db.slowFactor = dTypeCfg.slowFactor || 0.50;
+              db.markDuration = dTypeCfg.markedDuration || 3.5;
+            } else {
+              db.isScoutMark = false;
+            }
+
+            db.mesh.material = bulletMat;
+            db.mesh.material.color.setHex(dTypeCfg.bulletColor || 0x38bdf8);
+            if (curDroneType === "artilheiro") {
+              db.mesh.scale.set(1.3, 1.3, 1.3);
+            } else if (curDroneType === "batedor") {
+              db.mesh.scale.set(0.8, 0.8, 1.2);
+            } else {
+              db.mesh.scale.set(0.9, 0.9, 0.9);
+            }
+            db.mesh.visible = true;
+
+            shotsFired++;
+            if (shotsFired >= totalDroneShots) break;
           }
         }
       }
@@ -1323,6 +1400,32 @@ export function updateCombat(dt) {
     }
   }
 
+  // 4.4 LENTIDÃO E MARCAÇÃO DE ALVO (DRONE BATEDOR)
+  for (var bsi = 0; bsi < state.zombiePool.length; bsi++) {
+    var bsz = state.zombiePool[bsi];
+    if (!bsz.active || bsz.hp <= 0) continue;
+
+    if (bsz.slowTimer > 0) {
+      bsz.slowTimer -= dt;
+      if (bsz.slowTimer <= 0) {
+        bsz.slowTimer = 0;
+        bsz.slowFactor = 1.0;
+        var sBoost = (bsz.speedBoostTimer > 0) ? 1.40 : 1.0;
+        bsz.speed = bsz.baseSpeed * sBoost;
+      } else {
+        var sBoost = (bsz.speedBoostTimer > 0) ? 1.40 : 1.0;
+        bsz.speed = bsz.baseSpeed * sBoost * (bsz.slowFactor || 0.50);
+      }
+    }
+
+    if (bsz.markedTimer > 0) {
+      bsz.markedTimer -= dt;
+      if (bsz.markedTimer <= 0) {
+        bsz.markedTimer = 0;
+      }
+    }
+  }
+
   // 5. ATUALIZAÇÃO DOS PROJÉTEIS
   for (var bi = 0; bi < state.bulletPool.length; bi++) {
     var bullet = state.bulletPool[bi];
@@ -1394,6 +1497,15 @@ export function updateCombat(dt) {
           z2.burnTickTimer = 0.4;
         }
 
+        // Aplica efeito do Drone Batedor se o projétil for marcador
+        if (bullet.isScoutMark || bullet.droneBulletType === "batedor") {
+          z2.slowTimer = bullet.slowDuration || 3.0;
+          z2.slowFactor = bullet.slowFactor || 0.50;
+          z2.markedTimer = bullet.markDuration || 3.5;
+          z2.speed = z2.baseSpeed * z2.slowFactor;
+          showDamagePopup(z2.mesh.position, "LENTO! 🎯", false);
+        }
+
         if (bullet.isExplosive) {
           detonateExplosiveBullet(bullet);
           bullet.active = false;
@@ -1402,13 +1514,15 @@ export function updateCombat(dt) {
         }
 
         var isCrit = Math.random() < CRIT_CHANCE;
-        var finalDmg = bullet.damage * (isCrit ? CRIT_MULTIPLIER : 1);
+        var markedBonus = (z2.markedTimer > 0) ? 1.30 : 1.0;
+        var finalDmg = Math.round(bullet.damage * (isCrit ? CRIT_MULTIPLIER : 1) * markedBonus);
         z2.hp -= finalDmg;
         z2.flashTimer = 0.08;
         playHitSound();
 
         // Popup de dano flutuante
-        showDamagePopup(z2.mesh.position, finalDmg.toString() + (isCrit ? "!" : ""), isCrit);
+        var hitSuffix = isCrit ? "!" : (z2.markedTimer > 0 ? "🎯" : "");
+        showDamagePopup(z2.mesh.position, finalDmg.toString() + hitSuffix, isCrit || z2.markedTimer > 0);
 
         if (z2.type === "boss") {
           state.ui.updateBossHp?.(z2.hp, z2.maxHp);

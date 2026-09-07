@@ -782,39 +782,54 @@ html, body {
   opacity: 0.92;
 }
 
-/* DRONE COMPANION HUD TIMER */
-#drone-pill {
+/* DRONE COMPANION HUD INDICATOR (PERMANENTE) */
+#drone-indicator {
   display: none;
   position: absolute;
   top: 122px;
   right: 10px;
   z-index: 20;
-  background: rgba(14, 116, 144, 0.88);
+  background: rgba(15, 23, 42, 0.88);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border: 1.5px solid rgba(103, 232, 249, 0.55);
+  border: 1.5px solid rgba(56, 189, 248, 0.50);
   border-radius: 9999px;
   padding: 5px 12px;
-  font-size: 12px;
-  font-weight: 900;
-  letter-spacing: 0.06em;
-  color: #ecfeff;
-  box-shadow: 0 4px 18px rgba(6, 182, 212, 0.45);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  color: #f8fafc;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
   align-items: center;
   gap: 6px;
   pointer-events: none;
   user-select: none;
   white-space: nowrap;
 }
-#drone-pill.active {
+#drone-indicator.active {
   display: inline-flex;
 }
-.drone-pill-icon {
-  font-size: 14px;
+#drone-indicator .drone-icon {
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
 }
-.drone-pill-timer {
-  font-variant-numeric: tabular-nums;
-  color: #67e8f9;
+#drone-indicator .drone-name {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+#drone-indicator.type-sentinela {
+  border-color: rgba(6, 182, 212, 0.60);
+  color: #cffafe;
+}
+#drone-indicator.type-artilheiro {
+  border-color: rgba(249, 115, 22, 0.60);
+  color: #ffedd5;
+}
+#drone-indicator.type-batedor {
+  border-color: rgba(34, 197, 94, 0.60);
+  color: #dcfce7;
 }
 
 /* REMOÇÃO TOTAL DE DASH E INSTRUÇÕES */

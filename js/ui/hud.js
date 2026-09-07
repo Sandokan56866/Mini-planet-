@@ -10,7 +10,8 @@ import {
   STAMINA_MAX,
   STAMINA_RECOVERY_MIN,
   HUD_RING_CIRCUMFERENCE,
-  WEAPONS_CONFIG
+  WEAPONS_CONFIG,
+  DRONE_TYPES
 } from "../config.js";
 import { state } from "../state.js";
 import { toggleMute, isMuted } from "../systems/audio.js";
@@ -200,18 +201,24 @@ export function updateBombsUI() {
   }
 }
 
-export function updateDroneUI(remainingTime) {
-  var pill = document.getElementById("drone-pill");
-  var val = document.getElementById("drone-timer-val");
-  if (!pill) return;
+export function updateDroneIndicatorUI() {
+  var indicator = document.getElementById("drone-indicator");
+  if (!indicator) return;
 
-  if (remainingTime > 0) {
-    pill.style.display = "inline-flex";
-    pill.classList.add("active");
-    if (val) val.textContent = Math.ceil(remainingTime) + "s";
+  if (state.droneActive) {
+    var dTypeKey = state.droneType || "sentinela";
+    var dCfg = DRONE_TYPES[dTypeKey] || DRONE_TYPES.sentinela;
+    var dIcon = dCfg.icon || "🛸";
+    var dName = dCfg.name || "Sentinela";
+
+    indicator.innerHTML =
+      '<span class="drone-icon">' + dIcon + '</span>' +
+      '<span class="drone-name">' + dName + '</span>';
+    indicator.className = "drone-indicator active type-" + dTypeKey;
+    indicator.style.display = "inline-flex";
   } else {
-    pill.style.display = "none";
-    pill.classList.remove("active");
+    indicator.style.display = "none";
+    indicator.className = "drone-indicator";
   }
 }
 
@@ -290,11 +297,18 @@ export function hideBossBar() {
 }
 
 // ==========================================
-// 5. MODAL DE LEVEL UP
+// 5. MODAL DE LEVEL UP E SELEÇÃO DE DRONE
 // ==========================================
 export function showLevelUpModal(cards, onSelect) {
   if (!levelupModal || !upgradeCardsGrid) return;
   upgradeCardsGrid.innerHTML = "";
+
+  var badgeEl = levelupModal.querySelector(".levelup-badge");
+  var titleEl = levelupModal.querySelector(".levelup-title");
+  var subEl = levelupModal.querySelector(".levelup-sub");
+  if (badgeEl) badgeEl.textContent = "⭐ Subiu de Nível!";
+  if (titleEl) titleEl.textContent = "Escolha uma Melhoria";
+  if (subEl) subEl.textContent = "Fortaleça suas habilidades para enfrentar as hordas seguintes.";
 
   if (levelFlashEl) {
     levelFlashEl.classList.remove("flash");
@@ -321,6 +335,41 @@ export function showLevelUpModal(cards, onSelect) {
 
     btn.onclick = function () {
       onSelect(key);
+    };
+    upgradeCardsGrid.appendChild(btn);
+  });
+
+  levelupModal.style.display = "flex";
+}
+
+export function showDroneSelectionModal(onSelect) {
+  if (!levelupModal || !upgradeCardsGrid) return;
+  upgradeCardsGrid.innerHTML = "";
+
+  var badgeEl = levelupModal.querySelector(".levelup-badge");
+  var titleEl = levelupModal.querySelector(".levelup-title");
+  var subEl = levelupModal.querySelector(".levelup-sub");
+  if (badgeEl) badgeEl.textContent = "🛸 Companheiro de Combate";
+  if (titleEl) titleEl.textContent = "Escolha o Modelo de Drone";
+  if (subEl) subEl.textContent = "Selecione a doutrina permanente do seu drone de suporte orbital:";
+
+  var typesKeys = ["sentinela", "artilheiro", "batedor"];
+  typesKeys.forEach(function (tipo) {
+    var dCfg = DRONE_TYPES[tipo];
+    if (!dCfg) return;
+
+    var btn = document.createElement("button");
+    btn.className = "upgrade-card-btn drone-type-card";
+    btn.innerHTML =
+      '<div class="upg-icon-col">' + (dCfg.icon || "🛸") + '</div>' +
+      '<div class="upg-info-col">' +
+      '<div class="upg-level-pill">Companheiro Permanente</div>' +
+      '<div class="upg-name">' + dCfg.name + '</div>' +
+      '<div class="upg-desc">' + dCfg.desc + '</div>' +
+      '</div>';
+
+    btn.onclick = function () {
+      onSelect(tipo);
     };
     upgradeCardsGrid.appendChild(btn);
   });
@@ -420,7 +469,7 @@ export function initHUD() {
     updateCompactPill();
     updateWeaponUI();
     updateBombsUI();
-    updateDroneUI(state.droneTimer || 0);
+    updateDroneIndicatorUI();
     return;
   }
   state.hudInitialized = true;
@@ -434,6 +483,9 @@ export function initHUD() {
 
   var oldCrosshair = document.getElementById("target-crosshair");
   if (oldCrosshair) oldCrosshair.remove();
+
+  var oldDronePill = document.getElementById("drone-pill");
+  if (oldDronePill) oldDronePill.remove();
 
   var oldZoomBtn = document.getElementById("cam-zoom-btn");
   if (oldZoomBtn) oldZoomBtn.remove();
@@ -469,18 +521,15 @@ export function initHUD() {
     rightControls.appendChild(bombBtn);
   }
 
-  // Cria o pill de tempo restante do Drone
-  var dronePill = document.getElementById("drone-pill");
-  if (!dronePill) {
-    dronePill = document.createElement("div");
-    dronePill.id = "drone-pill";
-    dronePill.className = "drone-pill";
-    dronePill.style.display = "none";
-    dronePill.innerHTML =
-      '<span class="drone-icon">🛸</span>' +
-      '<span class="drone-text">Drone <strong id="drone-timer-val">45s</strong></span>';
+  // Cria o indicador estático e discreto do Drone Permanente
+  var droneIndicator = document.getElementById("drone-indicator");
+  if (!droneIndicator) {
+    droneIndicator = document.createElement("div");
+    droneIndicator.id = "drone-indicator";
+    droneIndicator.className = "drone-indicator";
+    droneIndicator.style.display = "none";
     var uiOverlay = document.getElementById("ui-overlay") || document.body;
-    uiOverlay.appendChild(dronePill);
+    uiOverlay.appendChild(droneIndicator);
   }
 
   // Constrói Anéis Circulares e Pílula Compacta na Top Bar
@@ -793,7 +842,8 @@ export function initHUD() {
   state.ui.showSkillTreeModal = showSkillTreeModal;
   state.ui.hideSkillTreeModal = hideSkillTreeModal;
   state.ui.updateBombsUI = updateBombsUI;
-  state.ui.updateDroneUI = updateDroneUI;
+  state.ui.updateDroneIndicatorUI = updateDroneIndicatorUI;
+  state.ui.showDroneSelectionModal = showDroneSelectionModal;
   state.ui.updateBiomeUI = updateBiomeUI;
 
   updateHpUI();
@@ -801,7 +851,7 @@ export function initHUD() {
   updateCompactPill();
   updateWeaponUI();
   updateBombsUI();
-  updateDroneUI(state.droneTimer || 0);
+  updateDroneIndicatorUI();
   updateMuteButtonUI(isMuted());
 }
 

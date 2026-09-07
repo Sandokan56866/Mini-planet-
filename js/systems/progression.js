@@ -13,7 +13,8 @@ import {
   XP_GROWTH_FACTOR,
   INITIAL_PLAYER_HP,
   INITIAL_MAX_HP,
-  UPGRADES_CONFIG
+  UPGRADES_CONFIG,
+  DRONE_TYPES
 } from "../config.js";
 import { state } from "../state.js";
 import { spawnZombie } from "../entities/enemies.js";
@@ -60,11 +61,6 @@ export function advanceWave() {
   state.ui.updateWaveProgressUI?.(state.waveKills, state.waveTargetKills);
 
   if ((state.currentWave % 10) === 0) {
-    // Alternância entre chefes a cada 10 ondas:
-    // Onda 10: O Bruto (cycle 1)
-    // Onda 20: O Carniceiro (cycle 2)
-    // Onda 30: O Bruto (cycle 3)
-    // Onda 40: O Carniceiro (cycle 4)
     var bossCycle = Math.floor(state.currentWave / 10);
     var isButcher = (bossCycle % 2 === 0);
 
@@ -100,7 +96,6 @@ export function onZombieKilled(type) {
   state.ui.updateWaveProgressUI?.(state.waveKills, state.waveTargetKills);
 
   if ((state.currentWave % 10) === 0) {
-    // Na onda de chefe, avanço imediato ao abater o chefe (Bruto ou Carniceiro)
     if (type === "boss" || type === "boss_brute" || type === "boss_butcher") {
       advanceWave();
     }
@@ -112,7 +107,59 @@ export function onZombieKilled(type) {
 }
 
 // ==========================================
-// 4. EXPERIÊNCIA E LEVEL UP (+55% POR NÍVEL)
+// 4. ATUALIZAÇÃO DINÂMICA DE UPGRADES DO DRONE
+// ==========================================
+export function updateDroneUpgradeDescriptions() {
+  if (!state.upgrades) return;
+  var dTypeKey = state.droneType || "sentinela";
+  var dCfg = DRONE_TYPES[dTypeKey] || DRONE_TYPES.sentinela;
+
+  // Drone Unlock (aquisição)
+  if (state.upgrades.droneUnlock) {
+    state.upgrades.droneUnlock.name = "Drone de Combate";
+    state.upgrades.droneUnlock.icon = "🛸";
+    state.upgrades.droneUnlock.desc = "Ativa um drone de suporte orbital permanente com especialização";
+  }
+
+  // droneDamage: calcula sobre os valores base do tipo ativo
+  if (state.upgrades.droneDamage) {
+    var dmgLvl = state.upgrades.droneDamage.level || 0;
+    var baseDmg = dCfg.damage;
+    var curDmg = Math.max(1, Math.round(baseDmg * (1.0 + dmgLvl * 0.35)));
+    var nextDmg = Math.max(1, Math.round(baseDmg * (1.0 + (dmgLvl + 1) * 0.35)));
+    state.upgrades.droneDamage.name = "Drone: Canhão (" + dCfg.name + ")";
+    state.upgrades.droneDamage.icon = "🎯";
+    if (dTypeKey === "artilheiro") {
+      var nextSplash = Math.max(1, Math.round((dCfg.splashDamage || 4) * (1.0 + (dmgLvl + 1) * 0.35)));
+      state.upgrades.droneDamage.desc = "+35% de dano do " + dCfg.name + " (" + curDmg + " ➔ " + nextDmg + " direto, " + nextSplash + " em área)";
+    } else {
+      state.upgrades.droneDamage.desc = "+35% de dano nos tiros do " + dCfg.name + " (" + curDmg + " ➔ " + nextDmg + ")";
+    }
+  }
+
+  // droneCadence: calcula sobre a cadência base do tipo ativo
+  if (state.upgrades.droneCadence) {
+    var cadLvl = state.upgrades.droneCadence.level || 0;
+    var curInterval = (dCfg.fireRate / (1.0 + cadLvl * 0.25)).toFixed(2);
+    var nextInterval = (dCfg.fireRate / (1.0 + (cadLvl + 1) * 0.25)).toFixed(2);
+    state.upgrades.droneCadence.name = "Drone: Tiro Rápido (" + dCfg.name + ")";
+    state.upgrades.droneCadence.icon = "⚡";
+    state.upgrades.droneCadence.desc = "+25% de cadência do " + dCfg.name + " (" + curInterval + "s ➔ " + nextInterval + "s)";
+  }
+
+  // droneCount: cita o tipo ativo
+  if (state.upgrades.droneCount) {
+    var countLvl = state.upgrades.droneCount.level || 0;
+    var curDrones = 1 + countLvl;
+    var nextDrones = 1 + countLvl + 1;
+    state.upgrades.droneCount.name = "Drone: Esquadrão (" + dCfg.name + ")";
+    state.upgrades.droneCount.icon = "🛸";
+    state.upgrades.droneCount.desc = "+1 drone auxiliar " + dCfg.name + " em órbita (" + curDrones + " ➔ " + nextDrones + ")";
+  }
+}
+
+// ==========================================
+// 5. EXPERIÊNCIA E LEVEL UP (+55% POR NÍVEL)
 // ==========================================
 export function addXp(amount) {
   var xpBonus = (state.metaBonus && state.metaBonus.xpBonus) ? state.metaBonus.xpBonus : 1.0;
@@ -135,6 +182,9 @@ export function triggerLevelUp() {
     state.charLevelLight.intensity = 4.5;
   }
 
+  // Atualiza as descrições dos upgrades do drone conforme o tipo ativo
+  updateDroneUpgradeDescriptions();
+
   var available = [];
   for (var k in state.upgrades) {
     if (k === "machinegun") {
@@ -144,6 +194,21 @@ export function triggerLevelUp() {
       }
       continue;
     }
+
+    // Upgrades condicionais do drone: droneDamage, droneCadence e droneCount só podem aparecer após o drone ser adquirido
+    if (k === "droneDamage" || k === "droneCadence" || k === "droneCount") {
+      if (!state.droneActive) {
+        continue;
+      }
+    }
+
+    // Melhoria de aquisição: se o drone já foi adquirido, droneUnlock sai definitivamente do sorteio
+    if (k === "droneUnlock") {
+      if (state.droneActive || state.upgrades[k].level >= state.upgrades[k].max) {
+        continue;
+      }
+    }
+
     if (state.upgrades[k].level < state.upgrades[k].max) {
       available.push(k);
     }
@@ -169,40 +234,78 @@ export function triggerLevelUp() {
 
 export function applyUpgrade(key) {
   if (!state.upgrades[key]) return;
-  state.upgrades[key].level++;
 
-  if (key === "maxHp") {
-    state.maxPlayerHp += 25;
-    state.playerHp = state.maxPlayerHp;
-    state.ui.updateHpUI?.();
-  } else if (key === "instantHeal") {
-    state.playerHp = Math.min(state.maxPlayerHp, state.playerHp + 50);
-    state.ui.updateHpUI?.();
-  } else if (key === "bombRadius") {
-    var bLvl = state.upgrades.bombRadius.level;
-    state.ui.showWeaponNotification?.("💣 Carga Ampliada Nv." + bLvl + " (+25% Raio de Explosão)!");
-  } else if (key === "machinegun") {
-    state.permanentWeapon = "machinegun";
-    if (!state.temporaryWeapon) {
-      state.currentWeapon = "machinegun";
+  // 1. Melhoria de Aquisição: "Drone de Combate"
+  if (key === "droneUnlock") {
+    state.upgrades.droneUnlock.level = 1;
+
+    // Abre segunda seleção com os três tipos de DRONE_TYPES
+    if (state.ui.showDroneSelectionModal) {
+      state.ui.showDroneSelectionModal(function (chosenType) {
+        state.droneType = chosenType;
+        state.droneActive = true;
+        state.combat?.setDroneType?.(chosenType);
+        state.combat?.activateDrone?.(chosenType);
+        state.ui.updateDroneIndicatorUI?.();
+        updateDroneUpgradeDescriptions();
+
+        var dCfg = DRONE_TYPES[chosenType] || DRONE_TYPES.sentinela;
+        state.ui.showWeaponNotification?.("🛸 Drone Ativado: " + dCfg.name + " (" + (dCfg.icon || "🛸") + ")!");
+
+        if (state.machineGunOfferedThisRoll) {
+          state.machineGunOffered = true;
+        }
+        state.machineGunOfferedThisRoll = false;
+
+        state.isLevelUpPaused = false;
+        state.ui.hideLevelUpModal?.();
+      });
+      return; // Mantém a pausa enquanto escolhe o tipo no submenu
+    } else {
+      state.droneType = "sentinela";
+      state.droneActive = true;
+      state.combat?.activateDrone?.("sentinela");
+      state.ui.updateDroneIndicatorUI?.();
+      updateDroneUpgradeDescriptions();
+      state.ui.showWeaponNotification?.("🛸 Drone de Combate Sentinela Ativado!");
     }
-    state.machineGunOffered = true;
-    state.ui.updateWeaponUI?.();
-    state.ui.showWeaponNotification?.("🔫 Metralhadora equipada como arma permanente!");
-  } else if (key === "droneDuration") {
-    if (state.droneActive && state.droneTimer > 0) {
-      state.droneTimer += 15.0;
-      state.ui.updateDroneUI?.(state.droneTimer);
+  } else {
+    state.upgrades[key].level++;
+
+    if (key === "maxHp") {
+      state.maxPlayerHp += 25;
+      state.playerHp = state.maxPlayerHp;
+      state.ui.updateHpUI?.();
+    } else if (key === "instantHeal") {
+      state.playerHp = Math.min(state.maxPlayerHp, state.playerHp + 50);
+      state.ui.updateHpUI?.();
+    } else if (key === "bombRadius") {
+      var bLvl = state.upgrades.bombRadius.level;
+      state.ui.showWeaponNotification?.("💣 Carga Ampliada Nv." + bLvl + " (+25% Raio de Explosão)!");
+    } else if (key === "machinegun") {
+      state.permanentWeapon = "machinegun";
+      if (!state.temporaryWeapon) {
+        state.currentWeapon = "machinegun";
+      }
+      state.machineGunOffered = true;
+      state.ui.updateWeaponUI?.();
+      state.ui.showWeaponNotification?.("🔫 Metralhadora equipada como arma permanente!");
+    } else if (key === "droneDamage") {
+      var curType = state.droneType || "sentinela";
+      var dCfg = DRONE_TYPES[curType] || DRONE_TYPES.sentinela;
+      state.ui.showWeaponNotification?.("🛸 Dano do " + dCfg.name + " Aprimorado (+35%)!");
+    } else if (key === "droneCadence") {
+      var curType = state.droneType || "sentinela";
+      var dCfg = DRONE_TYPES[curType] || DRONE_TYPES.sentinela;
+      state.ui.showWeaponNotification?.("🛸 Cadência do " + dCfg.name + " Aprimorada (+25%)!");
+    } else if (key === "droneCount") {
+      var curType = state.droneType || "sentinela";
+      var dCfg = DRONE_TYPES[curType] || DRONE_TYPES.sentinela;
+      state.ui.showWeaponNotification?.("🛸 Esquadrão " + dCfg.name + " Aprimorado (+1 Drone)!");
     }
-    state.ui.showWeaponNotification?.("🛸 Bateria do Drone Estendida (+15s)!");
-  } else if (key === "droneDamage") {
-    state.ui.showWeaponNotification?.("🛸 Dano do Drone Aprimorado (+35%)!");
-  } else if (key === "droneCadence") {
-    state.ui.showWeaponNotification?.("🛸 Cadência do Drone Aprimorada (+25%)!");
   }
 
   if (state.machineGunOfferedThisRoll && key !== "machinegun") {
-    // Jogador recusou a metralhadora: nunca mais aparece
     state.machineGunOffered = true;
   }
   state.machineGunOfferedThisRoll = false;
@@ -212,7 +315,7 @@ export function applyUpgrade(key) {
 }
 
 // ==========================================
-// 5. REINÍCIO COMPLETO DA PARTIDA (DELEGAÇÃO)
+// 6. REINÍCIO COMPLETO DA PARTIDA (DELEGAÇÃO)
 // ==========================================
 export function restartGame() {
   if (state.resetGame) {
@@ -221,7 +324,7 @@ export function restartGame() {
 }
 
 // ==========================================
-// 6. INICIALIZAÇÃO E LOOP DE SPAWN
+// 7. INICIALIZAÇÃO E LOOP DE SPAWN
 // ==========================================
 export function initProgression() {
   state.upgrades = JSON.parse(JSON.stringify(UPGRADES_CONFIG));
@@ -233,13 +336,17 @@ export function initProgression() {
   state.machineGunOffered = false;
   state.machineGunOfferedThisRoll = false;
 
+  // Atualiza as descrições iniciais com o tipo de drone padrão
+  updateDroneUpgradeDescriptions();
+
   state.progression = {
     addXp: addXp,
     triggerLevelUp: triggerLevelUp,
     applyUpgrade: applyUpgrade,
     restartGame: restartGame,
     onZombieKilled: onZombieKilled,
-    advanceWave: advanceWave
+    advanceWave: advanceWave,
+    updateDroneUpgradeDescriptions: updateDroneUpgradeDescriptions
   };
 }
 

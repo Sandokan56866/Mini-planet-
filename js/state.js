@@ -90,6 +90,10 @@ export const state = {
   minesCount: 3,
   playerMinesCount: 3,
   playerStationaryTimer: 0,
+  droneActive: false,
+  droneType: "sentinela",
+  droneShootTimer: 0,
+  droneMesh: null,
 
   // Estatísticas e progresso
   playerHp: 100,

@@ -386,7 +386,7 @@ export const ZOMBIE_BODY_RADII = {
   default: 0.026
 };
 
-// Lista de ângulos de desvio para contorno de obstáculos (±20°, ±40°, ±65°, ±90°)
+// Lista de ângulos de desvio para contorno de obstáculos (±20°, ±40°, ±65°, ±90°, ±120°, ±160°)
 export const ZOMBIE_AVOIDANCE_ANGLES = [
   (20 * Math.PI) / 180,
   (-20 * Math.PI) / 180,
@@ -395,8 +395,19 @@ export const ZOMBIE_AVOIDANCE_ANGLES = [
   (65 * Math.PI) / 180,
   (-65 * Math.PI) / 180,
   (90 * Math.PI) / 180,
-  (-90 * Math.PI) / 180
+  (-90 * Math.PI) / 180,
+  (120 * Math.PI) / 180,
+  (-120 * Math.PI) / 180,
+  (160 * Math.PI) / 180,
+  (-160 * Math.PI) / 180
 ];
+
+// Mecanismo de segurança contra travamento de zumbis em obstáculos
+export const ZOMBIE_STUCK_TIME_THRESHOLD = 2.5; // Tempo contínuo em estado walk para avaliar inatividade (2,5s)
+export const ZOMBIE_STUCK_MIN_TRAVEL = 0.018; // Limiar mínimo de distância angular percorrida (~0.40 unidades na esfera R=22)
+export const ZOMBIE_UNSTUCK_MAX_DISTANCE = 3.0; // Distância máxima permitida para reposicionamento suave (3 unidades)
+export const ZOMBIE_UNSTUCK_MAX_ANG_RAD = ZOMBIE_UNSTUCK_MAX_DISTANCE / PLANET_BASE_RADIUS;
+export const ZOMBIE_SAFE_SPAWN_ATTEMPTS = 8; // Número máximo de tentativas de sorteio de direção de spawn livre
 
 // Tipos de obstáculos pequenos que o Carniceiro em investida ignora/atropela
 export const BUTCHER_TRAMPLE_COLLIDER_TYPES = ["stump", "log", "swamplog", "bone", "barrel"];
@@ -817,10 +828,58 @@ export const BOMB_MAX_RADIUS_LEVEL = 4;
 export const BOMB_RADIUS = BOMB_BASE_RADIUS;
 export const BOMB_KNOCKBACK = 0.18;
 
-export const DRONE_BASE_DURATION = 45.0;
-export const DRONE_BASE_DAMAGE = 1;
-export const DRONE_BASE_FIRE_RATE = 0.50;
-export const DRONE_RANGE = 0.45;
+// Configurações dos Tipos de Drone Companheiro Permanente
+export const DRONE_TYPES = {
+  sentinela: {
+    id: "sentinela",
+    name: "Sentinela",
+    icon: "🛡️",
+    desc: "Cadência ultra-rápida (0.28s) e disparos precisos de energia contínua.",
+    damage: 2,
+    fireRate: 0.28,
+    range: 0.45,
+    bodyColor: 0x1e293b,
+    eyeColor: 0x06b6d4,
+    gunColor: 0x0284c7,
+    bulletColor: 0x38bdf8
+  },
+  artilheiro: {
+    id: "artilheiro",
+    name: "Artilheiro",
+    icon: "💥",
+    desc: "Canhão pesado (7 dano) com impacto de choque e dano explosivo em área.",
+    damage: 7,
+    fireRate: 1.10,
+    range: 0.42,
+    bodyColor: 0x27272a,
+    eyeColor: 0xf97316,
+    gunColor: 0xd97706,
+    bulletColor: 0xf97316,
+    splashRadius: 0.10,
+    splashDamage: 4
+  },
+  batedor: {
+    id: "batedor",
+    name: "Batedor",
+    icon: "🎯",
+    desc: "Disparos táticos marcadores: 50% de lentidão e +30% de dano sofrido pelo alvo.",
+    damage: 2,
+    fireRate: 0.55,
+    range: 0.50,
+    bodyColor: 0x14532d,
+    eyeColor: 0x22c55e,
+    gunColor: 0x15803d,
+    bulletColor: 0x4ade80,
+    slowDuration: 3.0,
+    slowFactor: 0.50,
+    markedDuration: 3.5,
+    markedDamageBonus: 0.30
+  }
+};
+
+export const DRONE_BASE_DAMAGE = DRONE_TYPES.sentinela.damage;
+export const DRONE_BASE_FIRE_RATE = DRONE_TYPES.sentinela.fireRate;
+export const DRONE_RANGE = DRONE_TYPES.sentinela.range;
 export const DRONE_ORBIT_RADIUS = 0.85;
 export const DRONE_HEIGHT = 1.10;
 export const DRONE_ORBIT_SPEED = 2.2;
@@ -842,9 +901,8 @@ export const BIOME_CHEST_DROPS = {
       { id: "smg", weight: 0.30, extraAmmoMult: 1.0 }
     ],
     devices: [
-      { type: "drone", duration: 45, weight: 0.40 },
-      { type: "mines", count: 3, weight: 0.35 },
-      { type: "barrier", weight: 0.25 }
+      { type: "mines", count: 3, weight: 0.58 },
+      { type: "barrier", weight: 0.42 }
     ],
     consumables: [
       { type: "medkit", hp: 20, weight: 0.20 },
@@ -867,9 +925,8 @@ export const BIOME_CHEST_DROPS = {
       { id: "rifle", weight: 0.25, extraAmmoMult: 1.0 }
     ],
     devices: [
-      { type: "drone", duration: 45, weight: 0.40 },
-      { type: "mines", count: 4, weight: 0.35 },
-      { type: "barrier", weight: 0.25 }
+      { type: "mines", count: 4, weight: 0.58 },
+      { type: "barrier", weight: 0.42 }
     ],
     consumables: [
       { type: "medkit", hp: 20, weight: 0.20 },
@@ -893,9 +950,8 @@ export const BIOME_CHEST_DROPS = {
     ],
     canSpawnMachinegun: true,
     devices: [
-      { type: "turret", weight: 0.40 },
-      { type: "drone", duration: 45, weight: 0.35 },
-      { type: "mines", count: 3, weight: 0.25 }
+      { type: "turret", weight: 0.62 },
+      { type: "mines", count: 3, weight: 0.38 }
     ],
     consumables: [
       { type: "bomb", count: 1, weight: 0.50 },
@@ -918,9 +974,8 @@ export const BIOME_CHEST_DROPS = {
       { id: "grenadelauncher", weight: 0.25, extraAmmoMult: 1.3 }
     ],
     devices: [
-      { type: "drone", duration: 45, weight: 0.45 },
-      { type: "turret", weight: 0.30 },
-      { type: "mines", count: 5, weight: 0.25 }
+      { type: "turret", weight: 0.55 },
+      { type: "mines", count: 5, weight: 0.45 }
     ],
     consumables: [
       { type: "bomb", count: 1, weight: 0.50 },
@@ -943,9 +998,8 @@ export const BIOME_CHEST_DROPS = {
       { id: "blades", weight: 0.30, extraAmmoMult: 1.0 }
     ],
     devices: [
-      { type: "drone", duration: 45, weight: 0.40 },
-      { type: "barrier", weight: 0.35 },
-      { type: "mines", count: 3, weight: 0.25 }
+      { type: "barrier", weight: 0.58 },
+      { type: "mines", count: 3, weight: 0.42 }
     ],
     consumables: [
       { type: "medkit", hp: 20, weight: 0.25 },
@@ -969,9 +1023,8 @@ export const BIOME_CHEST_DROPS = {
       { id: "blades", weight: 0.20, extraAmmoMult: 1.4 }
     ],
     devices: [
-      { type: "drone", duration: 45, weight: 0.45 },
-      { type: "turret", weight: 0.30 },
-      { type: "barrier", weight: 0.25 }
+      { type: "turret", weight: 0.55 },
+      { type: "barrier", weight: 0.45 }
     ],
     consumables: [
       { type: "bomb", count: 1, weight: 0.50 },
@@ -1218,10 +1271,10 @@ export const UPGRADES_CONFIG = {
   bombRadius: { level: 0, max: 4, name: "Carga Ampliada", icon: "💣", desc: "+25% no raio de explosão da bomba" },
   piercing: { level: 0, max: 4, name: "Tiro Perfurante", icon: "🗡️", desc: "+1 penetração de zumbi" },
   magnet: { level: 0, max: 5, name: "Ímã de XP", icon: "🧲", desc: "+35% raio de atração de XP" },
+  droneUnlock: { level: 0, max: 1, name: "Drone de Combate", icon: "🛸", desc: "Ativa um drone de suporte orbital permanente com especialização" },
   droneDamage: { level: 0, max: 4, name: "Drone: Canhão Pesado", icon: "🎯", desc: "+35% de dano nos tiros do drone" },
   droneCadence: { level: 0, max: 4, name: "Drone: Tiro Rápido", icon: "⚡", desc: "+25% de cadência do drone" },
   droneCount: { level: 0, max: 2, name: "Drone: Esquadrão", icon: "🛸", desc: "+1 drone auxiliar adicional" },
-  droneDuration: { level: 0, max: 3, name: "Drone: Bateria Estendida", icon: "🔋", desc: "+15s na duração do drone ao coletar" },
   machinegun: { level: 0, max: 1, name: "Metralhadora Permanente", icon: "🔫", desc: "Substitui a pistola com 4x cadência de tiro" }
 };
 

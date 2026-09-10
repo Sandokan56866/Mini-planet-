@@ -22,6 +22,7 @@ import {
   getRarityForWave,
   DRONE_TYPES,
   MAX_MINES_CARRIED,
+  MAX_TURRETS_CARRIED,
   WEAPONS_CONFIG
 } from "../config.js";
 import { state } from "../state.js";
@@ -129,7 +130,7 @@ export function updateModuleAndPassiveDescriptions() {
     state.upgrades.drone.icon = "🛸";
     if (dRank === 0) {
       state.upgrades.drone.name = "Drone de Combate";
-      state.upgrades.drone.desc = "Ativa um drone de suporte orbital permanente com especialização tática";
+      state.upgrades.drone.desc = "Aprimoramentos do drone orbital (bloqueado até ser resgatado em um baú)";
     } else if (dRank === 1) {
       state.upgrades.drone.name = "Drone: Canhão (" + dCfg.name + ")";
       state.upgrades.drone.desc = "+35% de dano nos disparos do drone orbital";
@@ -167,16 +168,16 @@ export function updateModuleAndPassiveDescriptions() {
     state.upgrades.mines.icon = "💣";
     if (mRank === 0) {
       state.upgrades.mines.name = "Minas Terrestres";
-      state.upgrades.mines.desc = "Planta minas explosivas no solo ao desacelerar, com detonação por aproximação";
+      state.upgrades.mines.desc = "Adiciona minas explosivas ao inventário com detonação por aproximação";
     } else if (mRank === 1) {
       state.upgrades.mines.name = "Minas: Carga Estabilizada";
-      state.upgrades.mines.desc = "+40% no dano das explosões e reposição acelerada";
+      state.upgrades.mines.desc = "+40% no dano das explosões e +3 minas ao inventário";
     } else if (mRank === 2) {
-      state.upgrades.mines.name = "Minas: Mina Dupla";
-      state.upgrades.mines.desc = "+1 mina plantada por ciclo e raio de detonação ampliado";
+      state.upgrades.mines.name = "Minas: Carga Dupla";
+      state.upgrades.mines.desc = "+4 minas ao inventário e raio de detonação ampliado";
     } else if (mRank === 3) {
       state.upgrades.mines.name = "Minas: Carga Termobárica";
-      state.upgrades.mines.desc = "+60% de dano devastador e onda de choque";
+      state.upgrades.mines.desc = "+60% de dano devastador, onda de choque e +4 minas";
     }
   }
 
@@ -186,16 +187,16 @@ export function updateModuleAndPassiveDescriptions() {
     state.upgrades.turret.icon = "📡";
     if (tRank === 0) {
       state.upgrades.turret.name = "Torreta Automática";
-      state.upgrades.turret.desc = "Instala sentinela de suporte autônoma que dispara contra zumbis próximos";
+      state.upgrades.turret.desc = "Concede torretas sentinelas ao inventário para posicionamento tático";
     } else if (tRank === 1) {
       state.upgrades.turret.name = "Torreta: Disparo Rápido";
-      state.upgrades.turret.desc = "+35% na cadência de tiro e maior duração em campo";
+      state.upgrades.turret.desc = "+1 torreta ao inventário e +35% na cadência de tiro";
     } else if (tRank === 2) {
-      state.upgrades.turret.name = "Torreta: Par de Sentinelas";
-      state.upgrades.turret.desc = "Permite manter 2 torretas ativas simultaneamente no mapa";
+      state.upgrades.turret.name = "Torreta: Suporte Tático";
+      state.upgrades.turret.desc = "+1 torreta ao inventário e maior tempo de atividade em campo";
     } else if (tRank === 3) {
       state.upgrades.turret.name = "Torreta: Calibre Pesado";
-      state.upgrades.turret.desc = "+50% de alcance e disparos perfurantes contra horda";
+      state.upgrades.turret.desc = "+2 torretas ao inventário e disparos perfurantes contra a horda";
     }
   }
 
@@ -278,6 +279,13 @@ export function triggerLevelUp() {
 
     var curRank = mUpg.rank !== undefined ? mUpg.rank : mUpg.level;
     if (curRank >= mUpg.max) continue;
+
+    // BLOQUEIO DO DRONE NA ÁRVORE DE LEVEL-UP:
+    // O módulo drone deixa de ser adquirível por level-up: seus níveis só aparecem na pool
+    // depois que o jogador pegou um drone em um baú. Antes disso, fica estritamente bloqueado.
+    if (mk === "drone" && !state.droneActive) {
+      continue;
+    }
 
     var isEquipped = equippedModules.indexOf(mk) !== -1;
     if (!isEquipped) {
@@ -539,14 +547,16 @@ export function applyUpgrade(key, rarity) {
   } else if (key === "mines") {
     state.minesModuleActive = true;
     var minesGained = Math.round(3 * rMult);
-    state.minesCount = Math.min(MAX_MINES_CARRIED, (state.minesCount || 0) + minesGained);
+    state.playerMinesCount = Math.min(MAX_MINES_CARRIED, (state.playerMinesCount !== undefined ? state.playerMinesCount : 3) + minesGained);
+    state.minesCount = state.playerMinesCount;
+    state.ui.updateWeaponUI?.();
     state.ui.showWeaponNotification?.("💣 Minas Terrestres Nv." + currentRank + " +" + minesGained + " (" + rarityLabel + ")!");
   } else if (key === "turret") {
     state.turretModuleActive = true;
-    if (state.playerLocalDir && state.pickups?.spawnTurret) {
-      state.pickups.spawnTurret(state.playerLocalDir);
-    }
-    state.ui.showWeaponNotification?.("📡 Torreta Sentinela Nv." + currentRank + " (" + rarityLabel + ")!");
+    var turretsGained = Math.max(1, Math.round(1 * rMult));
+    state.playerTurretsCount = Math.min(MAX_TURRETS_CARRIED, (state.playerTurretsCount || 0) + turretsGained);
+    state.ui.updateWeaponUI?.();
+    state.ui.showWeaponNotification?.("📡 Torreta Sentinela Nv." + currentRank + " +" + turretsGained + " (" + rarityLabel + ")!");
   } else if (key === "machinegun") {
     state.permanentWeapon = "machinegun";
     if (!state.temporaryWeapon) {
@@ -655,8 +665,71 @@ export function initProgression() {
     restartGame: restartGame,
     onZombieKilled: onZombieKilled,
     advanceWave: advanceWave,
+    awardDroneLevel: awardDroneLevel,
     updateDroneUpgradeDescriptions: updateModuleAndPassiveDescriptions
   };
+}
+
+export function awardDroneLevel() {
+  if (!state.droneActive) {
+    if (state.ui?.showDroneSelectionModal) {
+      state.ui.showDroneSelectionModal(function (chosenType) {
+        state.droneType = chosenType;
+        state.droneActive = true;
+        state.combat?.setDroneType?.(chosenType);
+        state.combat?.activateDrone?.(chosenType);
+        state.ui.updateDroneIndicatorUI?.();
+
+        var upg = state.upgrades?.drone;
+        if (upg) {
+          upg.rank = 1;
+          upg.level = 1;
+          upg.effectiveLevel = 1;
+          if (!state.equippedModules) state.equippedModules = [];
+          if (state.equippedModules.indexOf("drone") === -1) {
+            state.equippedModules.push("drone");
+          }
+        }
+        var dCfg = DRONE_TYPES[chosenType] || DRONE_TYPES.sentinela;
+        state.ui.showWeaponNotification?.("🛸 Drone " + dCfg.name + " Permanente Ativado!");
+        state.ui.hideLevelUpModal?.();
+        updateModuleAndPassiveDescriptions();
+      });
+    } else {
+      state.droneType = "sentinela";
+      state.droneActive = true;
+      state.combat?.activateDrone?.("sentinela");
+      state.ui?.updateDroneIndicatorUI?.();
+    }
+  } else {
+    var dUpg = state.upgrades?.drone;
+    if (dUpg) {
+      var maxRank = dUpg.max || 4;
+      var curRank = dUpg.rank !== undefined ? dUpg.rank : (dUpg.level || 1);
+      if (curRank < maxRank) {
+        dUpg.rank = curRank + 1;
+        dUpg.effectiveLevel = (dUpg.effectiveLevel || curRank) + 1;
+        dUpg.level = dUpg.effectiveLevel;
+
+        var curType = state.droneType || "sentinela";
+        var dCfg = DRONE_TYPES[curType] || DRONE_TYPES.sentinela;
+
+        if (dUpg.rank === 2) {
+          state.upgrades.droneDamage.level = (state.upgrades.droneDamage.level || 0) + 1;
+          state.ui?.showWeaponNotification?.("🛸 Dano do " + dCfg.name + " +35% (Nv. 2)!");
+        } else if (dUpg.rank === 3) {
+          state.upgrades.droneCadence.level = (state.upgrades.droneCadence.level || 0) + 1;
+          state.ui?.showWeaponNotification?.("🛸 Cadência do " + dCfg.name + " +25% (Nv. 3)!");
+        } else if (dUpg.rank >= 4) {
+          state.upgrades.droneCount.level = (state.upgrades.droneCount.level || 0) + 1;
+          state.ui?.showWeaponNotification?.("🛸 +1 Drone " + dCfg.name + " em Órbita (Nv. 4)!");
+        }
+        updateModuleAndPassiveDescriptions();
+      } else {
+        state.ui?.showWeaponNotification?.("🛸 Drone " + (DRONE_TYPES[state.droneType]?.name || "") + " no nível MÁXIMO!");
+      }
+    }
+  }
 }
 
 export function updateProgression(dt) {

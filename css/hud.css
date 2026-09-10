@@ -143,44 +143,59 @@ html, body {
   box-sizing: border-box;
 }
 
-/* TOP BAR (Linha Principal: Anéis e Pílula de Progresso | Sub-linha: Armas e Minas) */
+/* ==========================================
+   TOP BAR (LAYOUT DESPOLUÍDO E REORGANIZADO)
+   Exatamente dois filhos em fluxo no #ui-overlay: .top-bar e .bottom-bar.
+   Permanentes:
+   - Linha Principal: Anéis de Vida e Estamina, Pílula de Onda (Centro) e Controles (Direita)
+   - Linha Secundária: Barra de XP (3px), Toast de Nível e Pílula de Arma
+   ========================================== */
 .top-bar {
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  width: 100%;
-  box-sizing: border-box;
-  gap: 4px;
+  gap: 3px;
   pointer-events: none;
-  min-width: 0;
-  padding-left: env(safe-area-inset-left);
-  padding-right: env(safe-area-inset-right);
+  z-index: 30;
+  flex-shrink: 0;
 }
 
+/* Linha Principal: Anéis à esquerda, Onda ao centro, Controles à direita */
 .top-bar-main-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
   width: 100%;
   box-sizing: border-box;
-  gap: 6px;
-  min-width: 0;
   pointer-events: none;
+  position: relative;
+  min-height: 44px;
 }
 
+/* Linha Secundária: Barra fina de XP e Pílula de Arma à esquerda */
 .top-bar-sub-row {
   display: flex;
   justify-content: flex-start;
-  align-items: center;
+  align-items: flex-start;
   width: 100%;
   box-sizing: border-box;
   pointer-events: none;
-  padding-left: 2px;
+  position: relative;
 }
 
-/* ==========================================
-   ANÉIS CIRCULARES (CANTO SUPERIOR ESQUERDO)
-   ========================================== */
+.sub-row-left {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  position: relative;
+  pointer-events: none;
+}
+
+/* 1. ANÉIS DE VIDA E ESTAMINA */
 .rings-group {
   display: flex;
   align-items: center;
@@ -253,7 +268,6 @@ html, body {
   display: block;
 }
 
-/* Pulsação lenta quando a vida estiver abaixo de 30% */
 .ring-container.low-hp {
   animation: ringPulseLowHp 1.5s ease-in-out infinite alternate;
 }
@@ -268,7 +282,6 @@ html, body {
   }
 }
 
-/* Stamina esgotada: pisca uma vez e escurece */
 .ring-container.stamina-exhausted {
   opacity: 0.40;
   filter: grayscale(0.5);
@@ -284,38 +297,64 @@ html, body {
   }
   100% {
     filter: brightness(1);
-    transform: scale(1);
   }
 }
 
-/* ==========================================
-   GRUPO À DIREITA (ARMAS + MINAS + ONDA)
-   ========================================== */
-.top-right-group {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  flex-shrink: 1;
+/* BARRA FINA DE XP (3px) SEM NÚMEROS */
+.xp-bar-container {
+  width: 86px;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 9999px;
+  overflow: hidden;
   pointer-events: none;
+  margin-top: 1px;
+  margin-bottom: 2px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
 }
 
-/* ARMAS E ITENS */
-.weapons-hud-container {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  flex-shrink: 1;
-  pointer-events: none;
+.xp-bar-fill {
+  height: 3px;
+  width: 0%;
+  background: linear-gradient(90deg, #818cf8 0%, #38bdf8 100%);
+  border-radius: 9999px;
+  transition: width 0.25s ease;
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.5);
 }
 
+/* TOAST FLUTUANTE DE NÍVEL (2 segundos) */
+.level-toast {
+  position: absolute;
+  top: 45px;
+  left: 0;
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.95) 0%, rgba(99, 102, 241, 0.95) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 9999px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 900;
+  color: #ffffff;
+  letter-spacing: 0.04em;
+  box-shadow: 0 0 14px rgba(168, 85, 247, 0.7);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px) scale(0.92);
+  transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 35;
+  white-space: nowrap;
+}
+
+.level-toast.show {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+/* PÍLULA DE ARMA EQUIPADA */
 .weapon-pill {
-  background: rgba(20, 20, 28, 0.80);
+  background: rgba(20, 20, 28, 0.82);
   border: 1px solid rgba(255, 255, 255, 0.16);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border-radius: 9999px;
   padding: 3px 8px;
   display: flex;
@@ -324,125 +363,219 @@ html, body {
   box-shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
   pointer-events: none;
   min-width: 0;
-  flex-shrink: 1;
+  flex-shrink: 0;
   transition: border-color 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
-}
-
-.weapon-pill.temporary {
-  border-color: rgba(245, 158, 11, 0.55);
-  background: rgba(36, 24, 18, 0.85);
-}
-
-.weapon-pill.low-ammo {
-  border-color: rgba(239, 68, 68, 0.75);
-  animation: pulseAmmoWarning 0.8s infinite alternate;
-}
-
-@keyframes pulseAmmoWarning {
-  0% { transform: scale(1); filter: brightness(1); }
-  100% { transform: scale(1.05); filter: brightness(1.3); }
 }
 
 .weapon-icon {
   font-size: 13px;
   line-height: 1;
-  flex-shrink: 0;
+  display: inline-block;
+  pointer-events: none;
 }
 
 .weapon-name {
   font-size: 11px;
   font-weight: 700;
-  color: #f8fafc;
-  letter-spacing: 0.02em;
-  min-width: 0;
-  max-width: 65px;
+  color: #ffffff;
+  max-width: 80px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  pointer-events: none;
 }
 
 .weapon-ammo-badge {
   font-size: 10px;
   font-weight: 800;
-  padding: 1px 6px;
+  padding: 1px 5px;
   border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.12);
-  color: #fbbf24;
-  flex-shrink: 0;
+  line-height: 1.2;
   white-space: nowrap;
+  pointer-events: none;
 }
 
 .weapon-ammo-badge.infinite {
-  color: #94a3b8;
-  font-size: 12px;
-  padding: 1px 5px;
-}
-
-/* MINES INDICATOR PILL */
-.device-pill {
-  background: rgba(20, 20, 28, 0.80);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  border-radius: 9999px;
-  padding: 3px 7px;
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
-  pointer-events: none;
-  flex-shrink: 0;
-}
-
-.device-pill.has-mines {
-  border-color: rgba(56, 189, 248, 0.5);
-}
-
-.device-icon {
-  font-size: 12px;
-  line-height: 1;
-}
-
-.device-count {
-  font-size: 11px;
-  font-weight: 700;
+  background: rgba(56, 189, 248, 0.2);
+  border: 1px solid rgba(56, 189, 248, 0.45);
   color: #38bdf8;
 }
 
+.weapon-ammo-badge.temporary {
+  background: rgba(245, 158, 11, 0.25);
+  border: 1px solid rgba(245, 158, 11, 0.5);
+  color: #fef08a;
+}
+
+.weapon-ammo-badge.temporary.low-ammo {
+  background: rgba(239, 68, 68, 0.35);
+  border-color: #ef4444;
+  color: #fca5a5;
+  animation: lowAmmoBlink 0.6s infinite alternate;
+}
+@keyframes lowAmmoBlink {
+  0% { opacity: 0.6; }
+  100% { opacity: 1; }
+}
+
+/* 2. PÍLULA CENTRAL: Pílula única de Onda e Abates + Ícone de Bioma */
+.top-center-col {
+  display: contents;
+}
+
+.center-wave-pill {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(18, 16, 26, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-radius: 9999px;
+  padding: 4px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 31;
+}
+
+.biome-chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+#biome-icon {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.biome-name {
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: max-width 0.35s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease, margin 0.3s ease;
+  margin-left: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: #e2e8f0;
+  vertical-align: middle;
+}
+
+.biome-name.show-name {
+  max-width: 120px;
+  opacity: 1;
+  margin-left: 4px;
+}
+
+.wave-progress-text {
+  font-size: 11.5px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: 0.02em;
+}
+
+.pill-dot {
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+/* 3. GRUPO DIREITO: Áudio e Pausa */
+.top-right-group,
+.top-right-col {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: auto;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.fps-tiny {
+  font-size: 9px;
+  font-weight: 600;
+  color: #94a3b8;
+  padding-right: 4px;
+  pointer-events: none;
+}
+
+.audio-mute-btn,
+.pause-btn {
+  background: rgba(20, 20, 28, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 9999px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  font-size: 14px;
+  color: #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  pointer-events: auto;
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+  padding: 0;
+  margin: 0;
+}
+
+.audio-mute-btn:hover,
+.pause-btn:hover {
+  background: rgba(30, 30, 42, 0.95);
+  border-color: rgba(255, 255, 255, 0.4);
+  transform: scale(1.05);
+}
+
+.audio-mute-btn:active,
+.pause-btn:active {
+  transform: scale(0.92);
+}
+
+.audio-mute-btn.is-muted {
+  border-color: rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.2);
+}
+
 /* ==========================================
-   PÍLULA COMPACTA (CANTO SUPERIOR DIREITO)
+   SLOTS DE EQUIPAMENTO (MODAIS DE PAUSA E LEVEL-UP)
    ========================================== */
-.stats-compact-container {
+.modal-equipment-section {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  gap: 5px;
-  pointer-events: auto;
-  flex-shrink: 0;
-  min-width: 0;
-}
-
-.stats-top-row {
-  display: flex;
   align-items: center;
   gap: 6px;
+  margin: 10px 0 14px 0;
+  width: 100%;
 }
 
-/* ==========================================
-   BARRA DE EQUIPAMENTO PERMANENTE (HUD)
-   3 Slots Módulos + 4 Slots Passivos
-   ========================================== */
+.modal-slots-label {
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  color: #94a3b8;
+  text-transform: uppercase;
+}
+
 .equipment-slots-bar {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  background: rgba(14, 16, 24, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border-radius: 8px;
-  padding: 3px 6px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55);
+  gap: 8px;
+  background: rgba(14, 16, 24, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-radius: 10px;
+  padding: 5px 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
   pointer-events: auto;
   user-select: none;
 }
@@ -450,15 +583,15 @@ html, body {
 .slots-section {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 5px;
 }
 
 .slots-header-tag {
   font-size: 8.5px;
   font-weight: 900;
-  letter-spacing: 0.06em;
-  padding: 1px 3px;
-  border-radius: 3px;
+  letter-spacing: 0.05em;
+  padding: 2px 4px;
+  border-radius: 4px;
   line-height: 1;
 }
 
@@ -476,114 +609,73 @@ html, body {
 
 .slots-divider {
   width: 1px;
-  height: 14px;
-  background: rgba(255, 255, 255, 0.16);
-  margin: 0 1px;
+  height: 18px;
+  background: rgba(255, 255, 255, 0.15);
+  margin: 0 2px;
 }
 
 .slot-box {
-  width: 20px;
-  height: 20px;
-  border-radius: 4px;
+  position: relative;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px dashed rgba(255, 255, 255, 0.2);
   display: flex;
   align-items: center;
   justify-content: center;
-  position: relative;
-  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
-  font-size: 11px;
+  font-size: 13px;
+  transition: transform 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
 }
 
 .slot-box.empty {
-  border: 1.5px dashed rgba(255, 255, 255, 0.22);
-  background: rgba(255, 255, 255, 0.02);
-}
-
-.slot-box.slot-module.empty {
-  border-color: rgba(56, 189, 248, 0.35);
-}
-
-.slot-box.slot-passive.empty {
-  border-color: rgba(52, 211, 153, 0.35);
+  border-style: dashed;
+  opacity: 0.6;
 }
 
 .slot-box.filled {
-  border: 1.5px solid rgba(255, 255, 255, 0.4);
+  border-style: solid;
+  border-color: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
 }
 
 .slot-box.slot-module.filled {
-  border-color: #38bdf8;
-  background: linear-gradient(135deg, rgba(14, 165, 233, 0.35) 0%, rgba(2, 132, 199, 0.55) 100%);
-  box-shadow: 0 0 8px rgba(56, 189, 248, 0.4);
+  border-color: rgba(56, 189, 248, 0.7);
+  background: radial-gradient(circle, rgba(14, 165, 233, 0.25) 0%, rgba(0, 0, 0, 0.3) 100%);
 }
 
 .slot-box.slot-passive.filled {
-  border-color: #34d399;
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.35) 0%, rgba(5, 150, 105, 0.55) 100%);
-  box-shadow: 0 0 8px rgba(52, 211, 153, 0.4);
+  border-color: rgba(52, 211, 153, 0.7);
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.25) 0%, rgba(0, 0, 0, 0.3) 100%);
 }
 
 .slot-icon {
   line-height: 1;
-  display: inline-block;
-  transform: scale(0.9);
 }
 
 .slot-rank {
   position: absolute;
   bottom: -3px;
   right: -3px;
-  font-size: 7.5px;
+  font-size: 8.5px;
   font-weight: 900;
-  line-height: 1;
-  padding: 1px 2px;
-  background: #090d16;
-  border: 1px solid rgba(255, 255, 255, 0.45);
-  border-radius: 3px;
   color: #ffffff;
-}
-
-.compact-pill {
-  background: rgba(20, 20, 28, 0.75);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: #0f172a;
+  border: 1px solid rgba(255, 255, 255, 0.4);
   border-radius: 9999px;
-  padding: 3px 8px;
+  width: 13px;
+  height: 13px;
   display: flex;
   align-items: center;
-  gap: 5px;
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
-  pointer-events: none;
-  white-space: nowrap;
+  justify-content: center;
+  line-height: 1;
 }
 
-.pill-item {
-  font-size: 11px;
-  font-weight: 700;
-  color: #ffffff;
-  letter-spacing: 0.01em;
-}
-
-.pill-dot {
-  font-size: 8px;
-  color: rgba(255, 255, 255, 0.35);
-}
-
-.fps-tiny {
-  font-size: 9px;
-  font-weight: 600;
-  color: #94a3b8;
-  padding-right: 4px;
-  pointer-events: none;
-}
-
+/* ==========================================
+   RESPONSIVIDADE DA TOP BAR
+   ========================================== */
 @media (max-width: 480px) {
-  .top-bar {
-    gap: 3px;
-  }
-  .rings-group {
-    gap: 4px;
-  }
   .ring-container {
     width: 36px;
     height: 36px;
@@ -592,82 +684,57 @@ html, body {
     width: 36px;
     height: 36px;
   }
-  .weapon-name {
-    max-width: 50px;
-    font-size: 10px;
+  .xp-bar-container {
+    width: 78px;
   }
-  .compact-pill {
+  .center-wave-pill {
+    padding: 3px 9px;
+    gap: 5px;
+  }
+  .wave-progress-text {
+    font-size: 10.5px;
+  }
+  .weapon-pill {
     padding: 2px 6px;
     gap: 4px;
   }
-  .pill-item {
+  .weapon-name {
+    max-width: 55px;
     font-size: 10px;
-  }
-  .pill-dot {
-    font-size: 7px;
   }
   .fps-tiny {
     display: none;
-  }
-  .equipment-slots-bar {
-    padding: 2px 5px;
-    gap: 4px;
-  }
-  .slot-box {
-    width: 18px;
-    height: 18px;
-    font-size: 10px;
-  }
-  .slots-header-tag {
-    font-size: 7.5px;
-  }
-  .audio-mute-btn,
-  .pause-btn {
-    width: 44px;
-    height: 44px;
-    min-width: 44px;
-    min-height: 44px;
-    font-size: 13px;
   }
 }
 
 @media (max-width: 360px) {
   .ring-container {
-    width: 34px;
-    height: 34px;
+    width: 32px;
+    height: 32px;
   }
   .ring-svg {
-    width: 34px;
-    height: 34px;
+    width: 32px;
+    height: 32px;
+  }
+  .xp-bar-container {
+    width: 70px;
   }
   .weapon-name {
     display: none;
   }
-  .compact-pill {
-    padding: 2px 5px;
-    gap: 3px;
+  .center-wave-pill {
+    padding: 2px 7px;
+    gap: 4px;
   }
-  .pill-item {
+  .wave-progress-text {
     font-size: 9.5px;
-  }
-  .equipment-slots-bar {
-    padding: 1.5px 3px;
-    gap: 3px;
-  }
-  .slot-box {
-    width: 16px;
-    height: 16px;
-    font-size: 9px;
-  }
-  .slots-header-tag {
-    display: none;
   }
 }
 
 /* WEAPON PICKUP NOTIFICATION BANNER */
 #weapon-toast {
   position: absolute;
-  top: 168px;
+  top: 158px;
   left: 50%;
   transform: translateX(-50%) translateY(-20px);
   background: linear-gradient(135deg, rgba(245, 158, 11, 0.92) 0%, rgba(217, 119, 6, 0.95) 100%);
@@ -694,7 +761,7 @@ html, body {
 #frenzy-pill {
   display: none;
   position: absolute;
-  top: 122px;
+  top: 112px;
   left: max(16px, env(safe-area-inset-left));
   background: linear-gradient(135deg, rgba(239, 68, 68, 0.85) 0%, rgba(234, 88, 12, 0.9) 100%);
   border: 1px solid rgba(254, 202, 202, 0.4);
@@ -722,7 +789,7 @@ html, body {
 #boss-hud {
   display: none;
   position: absolute;
-  top: 76px;
+  top: 60px;
   left: 50%;
   transform: translateX(-50%);
   width: 88%;
@@ -858,6 +925,131 @@ html, body {
   transition: transform 0.05s ease-out;
 }
 
+/* ==========================================
+   CONTROLES DE DISPOSITIVOS (TORRETA, MINA E BOMBA)
+   ========================================== */
+.hud-devices-container {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  margin-bottom: 4px;
+}
+
+.hud-device-btn {
+  position: relative;
+  background: rgba(20, 14, 24, 0.84);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1.5px solid rgba(255, 255, 255, 0.16);
+  border-radius: 50%;
+  width: 48px;
+  height: 48px;
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.7);
+  transition: transform 0.12s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  padding: 0;
+}
+
+.hud-device-btn:active:not(.disabled) {
+  transform: scale(0.88);
+}
+
+.hud-device-btn.btn-mine {
+  border-color: rgba(239, 68, 68, 0.45);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.7), 0 0 14px rgba(239, 68, 68, 0.25);
+}
+
+.hud-device-btn.btn-mine:active:not(.disabled) {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.85), 0 0 22px rgba(239, 68, 68, 0.6);
+}
+
+.hud-device-btn.btn-turret {
+  border-color: rgba(56, 189, 248, 0.45);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.7), 0 0 14px rgba(56, 189, 248, 0.25);
+}
+
+.hud-device-btn.btn-turret:active:not(.disabled) {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.85), 0 0 22px rgba(56, 189, 248, 0.6);
+}
+
+.hud-device-btn.disabled {
+  opacity: 0.32;
+  cursor: not-allowed;
+  pointer-events: none;
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
+}
+
+.hud-device-btn.limit-reached {
+  border-color: rgba(245, 158, 11, 0.75);
+  box-shadow: 0 0 14px rgba(245, 158, 11, 0.4);
+  opacity: 0.68;
+}
+
+.hud-device-btn.shake-error {
+  animation: hud-device-shake 0.36s ease-in-out;
+}
+
+@keyframes hud-device-shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-6px); }
+  40%, 80% { transform: translateX(6px); }
+}
+
+.device-btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.device-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 900;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  border: 1.5px solid rgba(20, 14, 24, 0.95);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.85);
+  pointer-events: none;
+}
+
+.btn-mine .device-badge {
+  background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%);
+}
+
+.btn-turret .device-badge {
+  background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+}
+
+.hud-device-btn.limit-reached .device-badge {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+}
+
 /* BOTÃO CIRCULAR DE BOMBA (NO LUGAR DA LUPA) */
 .bomb-btn,
 .btn-bomb {
@@ -934,8 +1126,8 @@ html, body {
 #drone-indicator {
   display: none;
   position: absolute;
-  top: 122px;
-  right: 10px;
+  top: 112px;
+  right: max(16px, env(safe-area-inset-right));
   z-index: 20;
   background: rgba(15, 23, 42, 0.88);
   backdrop-filter: blur(12px);
@@ -1502,9 +1694,12 @@ html, body {
   pointer-events: none;
 }
 
-/* Quando pausado, congela toques no joystick e botão de bomba */
+/* Quando pausado, congela toques no joystick, dispositivos e botão de bomba */
 body.game-paused #joystick-area,
 body.game-paused #btn-bomb,
+body.game-paused #btn-mine,
+body.game-paused #btn-turret,
+body.game-paused .hud-devices-container,
 body.game-paused .bottom-bar {
   pointer-events: none !important;
 }

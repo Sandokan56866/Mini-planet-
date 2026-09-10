@@ -17,10 +17,18 @@ import {
   INITIAL_CHESTS_COUNT,
   CHEST_COLLECT_RADIUS,
   CHEST_TYPES_WEIGHTS,
+  DROP_CHEST_LIFETIME,
+  DROP_CHEST_BLINK_START,
+  FIXED_CHEST_SCALE,
+  FIXED_CHEST_LIGHT_INTENSITY,
+  FIXED_CHEST_LIGHT_DISTANCE,
+  FIXED_CHEST_LIGHT_COLOR,
   BIOME_CHEST_DROPS,
+  DRONE_TYPES,
   MACHINEGUN_MIN_WAVE,
   MACHINEGUN_CHANCE,
   MAX_MINES_CARRIED,
+  MAX_TURRETS_CARRIED,
   MINE_TRIGGER_RADIUS,
   MINE_EXPLOSION_RADIUS,
   MINE_DAMAGE,
@@ -136,12 +144,13 @@ function createChestMesh(category) {
   var group = new THREE.Group();
   var colorHex = CHEST_COLORS[category] || 0xf97316;
 
-  // Base do baú (madeira escura com ferragem)
-  var woodMat = new THREE.MeshLambertMaterial({ color: 0x543d2b, flatShading: true });
+  // Base do baú (madeira escura com ferragem reforçada)
+  var woodMat = new THREE.MeshLambertMaterial({ color: 0x422f20, flatShading: true });
+  var ironMat = new THREE.MeshLambertMaterial({ color: 0x27272a, flatShading: true });
   var bandMat = new THREE.MeshLambertMaterial({
     color: colorHex,
     emissive: colorHex,
-    emissiveIntensity: 0.35,
+    emissiveIntensity: 0.45,
     flatShading: true
   });
 
@@ -150,6 +159,20 @@ function createChestMesh(category) {
   baseMesh.position.y = 0.09;
   baseMesh.castShadow = true;
   group.add(baseMesh);
+
+  // Cantoneiras metálicas reforçadas
+  var cornerGeo = new THREE.BoxGeometry(0.045, 0.19, 0.045);
+  var cOffsets = [
+    [-0.16, 0.09, -0.11],
+    [0.16, 0.09, -0.11],
+    [-0.16, 0.09, 0.11],
+    [0.16, 0.09, 0.11]
+  ];
+  for (var cIdx = 0; cIdx < cOffsets.length; cIdx++) {
+    var cMesh = new THREE.Mesh(cornerGeo, ironMat);
+    cMesh.position.set(cOffsets[cIdx][0], cOffsets[cIdx][1], cOffsets[cIdx][2]);
+    group.add(cMesh);
+  }
 
   // Faixa colorida central na base
   var bandGeo = new THREE.BoxGeometry(0.35, 0.09, 0.25);
@@ -174,13 +197,13 @@ function createChestMesh(category) {
 
   group.add(lidGroup);
 
-  // Halo suave no chão
-  var glowGeo = new THREE.RingGeometry(0.12, 0.32, 12);
+  // Halo luminoso no chão
+  var glowGeo = new THREE.RingGeometry(0.12, 0.38, 16);
   var glowMat = new THREE.MeshBasicMaterial({
     color: colorHex,
     side: THREE.DoubleSide,
     transparent: true,
-    opacity: 0.35,
+    opacity: 0.40,
     depthWrite: false
   });
   var glowMesh = new THREE.Mesh(glowGeo, glowMat);
@@ -188,10 +211,31 @@ function createChestMesh(category) {
   glowMesh.position.y = 0.01;
   group.add(glowMesh);
 
+  // Luz própria do baú (fortalecida para baús fixos)
+  var chestLight = new THREE.PointLight(colorHex, 1.2, 4.0, 2);
+  chestLight.position.set(0, 0.28, 0);
+  group.add(chestLight);
+
+  // Coluna / farol de luz vertical para baús fixos (visto a longa distância)
+  var beaconGeo = new THREE.CylinderGeometry(0.04, 0.14, 3.2, 8);
+  var beaconMat = new THREE.MeshBasicMaterial({
+    color: colorHex,
+    transparent: true,
+    opacity: 0.32,
+    depthWrite: false
+  });
+  var beaconMesh = new THREE.Mesh(beaconGeo, beaconMat);
+  beaconMesh.position.y = 1.6;
+  beaconMesh.visible = false;
+  group.add(beaconMesh);
+
   group.userData = {
     lidGroup: lidGroup,
     bandMat: bandMat,
-    glowMat: glowMat
+    glowMat: glowMat,
+    chestLight: chestLight,
+    beaconMesh: beaconMesh,
+    beaconMat: beaconMat
   };
 
   return group;
@@ -332,7 +376,7 @@ export function initPickups() {
 
   // Pool de Baús (adicionados ao planetGroup)
   state.chestPool = [];
-  for (var c = 0; c < 16; c++) {
+  for (var c = 0; c < 24; c++) {
     var cat = (c % 3 === 0) ? "weapon" : (c % 3 === 1 ? "device" : "consumable");
     var cMesh = createChestMesh(cat);
     cMesh.visible = false;
@@ -343,6 +387,8 @@ export function initPickups() {
     state.chestPool.push({
       mesh: cMesh,
       active: false,
+      isFixed: false,
+      lifeTime: 0,
       category: cat,
       dirLocal: new THREE.Vector3(),
       openingTimer: 0,
@@ -437,16 +483,25 @@ export function initPickups() {
   state.temporaryWeapon = null;
   state.temporaryWeaponAmmo = 0;
   state.hasFoundMachinegun = false;
-  state.minesCount = state.minesCount !== undefined ? state.minesCount : MAX_MINES_CARRIED / 2;
+  state.playerMinesCount = state.playerMinesCount !== undefined ? state.playerMinesCount : 3;
+  state.minesCount = state.playerMinesCount;
+  state.playerTurretsCount = state.playerTurretsCount !== undefined ? state.playerTurretsCount : 0;
   state.playerStationaryTimer = 0;
   state.lastMedkitDropTime = -999;
 
-  // Spawna os baús iniciais distribuídos equilibradamente entre os 6 biomas
-  var initialBiomes = ["suburb", "forest", "industrial", "desert", "swamp", "frozen"];
-  for (var i = 0; i < INITIAL_CHESTS_COUNT; i++) {
-    var bTarget = initialBiomes[i % initialBiomes.length];
-    var initDir = findDryLandDir(bTarget);
-    spawnChest(initDir);
+  // 1. Spawna os BAÚS FIXOS: gerados junto com o cenário, um por região do planeta
+  // Posições permanentes, visual mais robusto e farol de luz visível de longe
+  var planetRegions = ["suburb", "forest", "industrial", "desert", "swamp", "frozen"];
+  for (var rIdx = 0; rIdx < planetRegions.length; rIdx++) {
+    var reg = planetRegions[rIdx];
+    var fixedDir = findDryLandDir(reg);
+    spawnChest(fixedDir, null, true);
+  }
+
+  // 2. Spawna os primeiros BAÚS DE DROP (que somem após tempo determinado)
+  for (var dIdx = 0; dIdx < 2; dIdx++) {
+    var dropDir = findDryLandDir();
+    spawnChest(dropDir, null, false);
   }
 }
 
@@ -455,7 +510,7 @@ export function initPickups() {
 // ==========================================
 
 // Verifica se uma coordenada angular está dentro da colisão de algum objeto do cenário
-function isPointBlockedByColliders(dir) {
+export function isPointBlockedByColliders(dir) {
   if (!state.colliders) return false;
   for (var c = 0; c < state.colliders.length; c++) {
     var col = state.colliders[c];
@@ -493,7 +548,7 @@ function findDryLandDir(preferredBiomeId) {
   return fallback || new THREE.Vector3(0, 1, 0);
 }
 
-export function spawnChest(forcedDir, forcedCategory) {
+export function spawnChest(forcedDir, forcedCategory, isFixed) {
   var pool = state.chestPool || [];
   var freeChest = null;
   for (var i = 0; i < pool.length; i++) {
@@ -508,17 +563,28 @@ export function spawnChest(forcedDir, forcedCategory) {
   var biome = getBiomeAt(dir);
   var biomeDrops = BIOME_CHEST_DROPS[biome.id] || BIOME_CHEST_DROPS.suburb;
 
+  var fixedChest = !!isFixed;
   var cat = forcedCategory;
   if (!cat) {
     var rand = Math.random();
-    var wWeapon = biomeDrops.weights.weapon;
-    var wDevice = biomeDrops.weights.device;
+    var wWeapon, wDevice;
+    if (fixedChest) {
+      var fw = biomeDrops.fixedWeights || CHEST_TYPES_WEIGHTS.fixed || { weapon: 0.20, device: 0.70, consumable: 0.10 };
+      wWeapon = fw.weapon;
+      wDevice = fw.device;
+    } else {
+      var dw = biomeDrops.dropWeights || CHEST_TYPES_WEIGHTS.drop || { weapon: 0.48, device: 0.32, consumable: 0.20 };
+      wWeapon = dw.weapon;
+      wDevice = dw.device;
+    }
     if (rand < wWeapon) cat = "weapon";
     else if (rand < wWeapon + wDevice) cat = "device";
     else cat = "consumable";
   }
 
   freeChest.active = true;
+  freeChest.isFixed = fixedChest;
+  freeChest.lifeTime = 0;
   freeChest.category = cat;
   freeChest.biomeId = biome.id;
   freeChest.dirLocal.copy(dir);
@@ -537,11 +603,23 @@ export function spawnChest(forcedDir, forcedCategory) {
   if (uData.lidGroup) {
     uData.lidGroup.rotation.x = 0;
   }
+  if (uData.chestLight) {
+    uData.chestLight.color.setHex(fixedChest ? FIXED_CHEST_LIGHT_COLOR : colorHex);
+    uData.chestLight.intensity = fixedChest ? FIXED_CHEST_LIGHT_INTENSITY : 1.2;
+    uData.chestLight.distance = fixedChest ? FIXED_CHEST_LIGHT_DISTANCE : 4.0;
+  }
+  if (uData.beaconMesh) {
+    uData.beaconMesh.visible = fixedChest;
+  }
+  if (uData.beaconMat) {
+    uData.beaconMat.color.setHex(colorHex);
+  }
 
   var r = radiusAt(dir);
   freeChest.mesh.position.copy(dir).multiplyScalar(r);
   freeChest.mesh.quaternion.setFromUnitVectors(upAxis, dir);
-  freeChest.mesh.scale.set(1, 1, 1);
+  var scaleFactor = fixedChest ? FIXED_CHEST_SCALE : 1.0;
+  freeChest.mesh.scale.set(scaleFactor, scaleFactor, scaleFactor);
   freeChest.mesh.visible = true;
 }
 
@@ -665,6 +743,43 @@ export function spawnBarrier(dirLocal, faceDir) {
   state.sounds.playDeploySound?.();
 }
 
+// Pulso visual circular ao posicionar dispositivo (mina/torreta)
+export function triggerPlacementPulse(dirLocal, colorHex) {
+  if (!state.planetGroup || !dirLocal) return;
+  var color = (colorHex !== undefined) ? colorHex : 0x38bdf8;
+  var ringGeo = new THREE.RingGeometry(0.04, 0.16, 24);
+  var ringMat = new THREE.MeshBasicMaterial({
+    color: color,
+    transparent: true,
+    opacity: 0.9,
+    side: THREE.DoubleSide,
+    depthWrite: false
+  });
+  var ringMesh = new THREE.Mesh(ringGeo, ringMat);
+  var r = radiusAt(dirLocal) + 0.025;
+  ringMesh.position.copy(dirLocal).multiplyScalar(r);
+  ringMesh.quaternion.setFromUnitVectors(upAxis, dirLocal);
+  state.planetGroup.add(ringMesh);
+
+  var startTime = performance.now();
+  var duration = 400; // ms
+  function anim() {
+    var elapsed = performance.now() - startTime;
+    var t = Math.min(1, elapsed / duration);
+    var scale = 0.5 + t * 2.0;
+    ringMesh.scale.set(scale, scale, scale);
+    ringMat.opacity = 0.9 * (1.0 - t);
+    if (t < 1) {
+      requestAnimationFrame(anim);
+    } else {
+      if (ringMesh.parent) ringMesh.parent.remove(ringMesh);
+      ringGeo.dispose();
+      ringMat.dispose();
+    }
+  }
+  requestAnimationFrame(anim);
+}
+
 // ==========================================
 // 4. ATUALIZAÇÃO E INTERAÇÃO
 // ==========================================
@@ -680,38 +795,21 @@ export function updatePickups(dt) {
   state.chestRespawnTimer = (state.chestRespawnTimer || 0) + dt;
   if (state.chestRespawnTimer >= CHEST_RESPAWN_INTERVAL) {
     state.chestRespawnTimer = 0;
-    var activeChests = 0;
-    var biomeKeys = ["suburb", "forest", "industrial", "desert", "swamp", "frozen"];
-    var countsPerBiome = { suburb: 0, forest: 0, industrial: 0, desert: 0, swamp: 0, frozen: 0 };
-
+    var activeDropChests = 0;
     for (var ci = 0; ci < curChestPool.length; ci++) {
-      if (curChestPool[ci].active) {
-        activeChests++;
-        var bId = curChestPool[ci].biomeId || "suburb";
-        countsPerBiome[bId] = (countsPerBiome[bId] || 0) + 1;
+      if (curChestPool[ci].active && !curChestPool[ci].isFixed) {
+        activeDropChests++;
       }
     }
 
-    if (activeChests < MAX_SIMULTANEOUS_CHESTS) {
-      // Prioriza os biomas com menor número de caixas ativas para evitar concentração
-      var minCount = 999;
-      var candidateBiomes = [];
-      for (var bk = 0; bk < biomeKeys.length; bk++) {
-        var key = biomeKeys[bk];
-        if (countsPerBiome[key] < minCount) {
-          minCount = countsPerBiome[key];
-          candidateBiomes = [key];
-        } else if (countsPerBiome[key] === minCount) {
-          candidateBiomes.push(key);
-        }
-      }
-      var targetBiome = candidateBiomes[Math.floor(Math.random() * candidateBiomes.length)];
-
-      // Gera afastado do jogador (dot < 0.65) e no bioma alvo
+    // Mantém até 5 baús de drop temporários espalhados pelo mapa
+    if (activeDropChests < 5) {
+      var biomeKeys = ["suburb", "forest", "industrial", "desert", "swamp", "frozen"];
+      var targetBiome = biomeKeys[Math.floor(Math.random() * biomeKeys.length)];
       for (var tries = 0; tries < 25; tries++) {
         var candDir = findDryLandDir(targetBiome);
-        if (candDir.dot(playerDir) < 0.65) {
-          spawnChest(candDir);
+        if (candDir.dot(playerDir) < 0.70) {
+          spawnChest(candDir, null, false);
           break;
         }
       }
@@ -740,6 +838,20 @@ export function updatePickups(dt) {
         chest.mesh.visible = false;
       }
       continue;
+    }
+
+    // Baús de drop temporários: desaparecem depois de DROP_CHEST_LIFETIME
+    if (!chest.isFixed) {
+      chest.lifeTime = (chest.lifeTime || 0) + dt;
+      if (chest.lifeTime >= DROP_CHEST_BLINK_START) {
+        var blinkOn = Math.sin(chest.lifeTime * 14) > 0;
+        chest.mesh.visible = blinkOn;
+      }
+      if (chest.lifeTime >= DROP_CHEST_LIFETIME) {
+        chest.active = false;
+        chest.mesh.visible = false;
+        continue;
+      }
     }
 
     var cDot = chest.dirLocal.dot(playerDir);
@@ -798,7 +910,23 @@ export function updatePickups(dt) {
         state.ui.updateWeaponUI?.();
         state.sounds.playWeaponPickupSound?.();
       } else if (chest.category === "device") {
-        var dList = bDrops.devices || [{ type: "mines", count: 3, weight: 1.0 }];
+        // Baús fixos têm peso muito maior para drone e turret; baús de drop favorecem minas
+        var dList;
+        if (chest.isFixed) {
+          dList = bDrops.devicesFixed || [
+            { type: "drone", weight: 0.50 },
+            { type: "turret", weight: 0.40 },
+            { type: "mines", weight: 0.10 }
+          ];
+        } else {
+          dList = bDrops.devicesDrop || [
+            { type: "mines", weight: 0.55 },
+            { type: "turret", weight: 0.18 },
+            { type: "drone", weight: 0.12 },
+            { type: "barrier", weight: 0.15 }
+          ];
+        }
+
         var totalDWeight = 0;
         for (var di = 0; di < dList.length; di++) totalDWeight += dList[di].weight;
         var dRoll = Math.random() * totalDWeight;
@@ -813,31 +941,36 @@ export function updatePickups(dt) {
         }
 
         if (selectedDev.type === "drone") {
-          var droneDur = selectedDev.duration || 45;
-          state.combat?.activateDrone?.(droneDur);
-          state.ui.showItemNotification?.("🛸 DRONE DE COMBATE ATIVADO! [" + bDrops.name + "]", "#38bdf8");
+          // Drone permanente: abre a submodal de escolha se for o primeiro, ou sobe 1 nível do módulo
+          if (state.progression?.awardDroneLevel) {
+            state.progression.awardDroneLevel(true);
+          } else if (state.ui?.showDroneSelectionModal) {
+            state.ui.showDroneSelectionModal(function (chosenType) {
+              state.droneType = chosenType;
+              state.droneActive = true;
+              state.combat?.setDroneType?.(chosenType);
+              state.combat?.activateDrone?.(chosenType);
+              state.ui?.updateDroneIndicatorUI?.();
+              var dCfg = DRONE_TYPES[chosenType] || { name: "Sentinela" };
+              state.ui?.showWeaponNotification?.("🛸 Drone " + dCfg.name + " Permanente Ativado!");
+            });
+          }
         } else if (selectedDev.type === "turret") {
-          var curTurretPool = state.turretPool || [];
-          var activeTurretsCount = 0;
-          for (var tCheck = 0; tCheck < curTurretPool.length; tCheck++) {
-            if (curTurretPool[tCheck].active) activeTurretsCount++;
-          }
-          if (activeTurretsCount < MAX_ACTIVE_TURRETS) {
-            spawnTurret(playerDir);
-            state.ui.showItemNotification?.("TORRETA DE COMBATE INSTALADA! [" + bDrops.name + "]", "#38bdf8");
-          } else {
-            state.minesCount = Math.min(MAX_MINES_CARRIED, state.minesCount + 3);
-            state.ui.updateMinesUI?.();
-            state.ui.showItemNotification?.("+3 MINAS RECARREGADAS", "#38bdf8");
-          }
+          // Torreta adicionada como item de inventário do jogador (não planta automaticamente)
+          state.playerTurretsCount = Math.min(MAX_TURRETS_CARRIED, (state.playerTurretsCount !== undefined ? state.playerTurretsCount : 0) + 1);
+          state.ui.updateWeaponUI?.();
+          state.ui.showItemNotification?.("🛠️ +1 TORRETA AO INVENTÁRIO [" + bDrops.name.toUpperCase() + "]", "#38bdf8");
         } else if (selectedDev.type === "barrier") {
           spawnBarrier(playerDir);
-          state.ui.showItemNotification?.("BARREIRA DEFENSIVA ATIVA! [" + bDrops.name + "]", "#38bdf8");
+          state.ui.showItemNotification?.("BARREIRA DEFENSIVA ATIVA! [" + bDrops.name.toUpperCase() + "]", "#38bdf8");
         } else {
-          var mAdd = selectedDev.count || 3;
-          state.minesCount = Math.min(MAX_MINES_CARRIED, state.minesCount + mAdd);
+          // Minas: concede de 2 a 4 minas ao inventário do jogador
+          var mAdd = Math.floor(Math.random() * 3) + 2;
+          state.playerMinesCount = Math.min(MAX_MINES_CARRIED, (state.playerMinesCount !== undefined ? state.playerMinesCount : 3) + mAdd);
+          state.minesCount = state.playerMinesCount;
+          state.ui.updateWeaponUI?.();
           state.ui.updateMinesUI?.();
-          state.ui.showItemNotification?.("+" + mAdd + " MINAS COLETADAS [" + bDrops.name + "]", "#38bdf8");
+          state.ui.showItemNotification?.("💣 +" + mAdd + " MINAS AO INVENTÁRIO [" + bDrops.name.toUpperCase() + "]", "#38bdf8");
         }
         state.sounds.playItemPickupSound?.();
       } else {
@@ -1219,7 +1352,13 @@ function updateScreenEdgeIndicators() {
       if (distEl) {
         var angDist = Math.acos(Math.max(-1, Math.min(1, cTarget.dirLocal.dot(state.playerLocalDir || upAxis))));
         var distMeters = Math.round(angDist * PLANET_BASE_RADIUS);
-        distEl.textContent = distMeters + "m";
+        distEl.textContent = (cTarget.isFixed ? "★ " : "") + distMeters + "m";
+      }
+
+      if (cTarget.isFixed) {
+        el.classList.add("fixed-chest-indicator");
+      } else {
+        el.classList.remove("fixed-chest-indicator");
       }
     } else {
       el.style.display = "none";

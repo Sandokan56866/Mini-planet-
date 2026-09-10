@@ -674,10 +674,12 @@ function createZombieMesh(type) {
   // Braços
   var armL = new THREE.Mesh(new THREE.BoxGeometry(armW, armH, armD), skinMat);
   armL.position.set(-torsoW * 0.5 - armW * 0.5, torsoH * 0.25, 0);
+  armL.rotation.x = -Math.PI / 2;
   torso.add(armL);
 
   var armR = new THREE.Mesh(new THREE.BoxGeometry(armW, armH, armD), skinMat);
   armR.position.set(torsoW * 0.5 + armW * 0.5, torsoH * 0.25, 0);
+  armR.rotation.x = -Math.PI / 2;
   torso.add(armR);
 
   var armorPlate = null;
@@ -738,6 +740,7 @@ function createZombieMesh(type) {
     frameOffset: Math.floor(Math.random() * 8),
     lastAvoidAngle: 0,
     lastMoveBlocked: false,
+    lastForward: new THREE.Vector3(0, 0, 1),
     surfaceRadius: PLANET_BASE_RADIUS,
     targetRadius: PLANET_BASE_RADIUS,
     isTargetVisual: false,
@@ -779,11 +782,12 @@ function createZombieMesh(type) {
     lastSwarmSpawnTime: 0,
 
     getFacingToPlayerDot: function () {
-      // Produto escalar entre a direção que o zumbi encara e a direção de onde vem o tiro do jogador
-      // zUp = zObj.dirLocal, zForward = tangente zumbi -> jogador
+      // Produto escalar entre a direção que o zumbi encara (+Z local no mundo) e a direção de onde vem o tiro do jogador
+      var forwardWorld = new THREE.Vector3(0, 0, 1).applyQuaternion(this.mesh.quaternion).normalize();
       var toPlayer = new THREE.Vector3().subVectors(state.playerLocalDir, this.dirLocal);
       toPlayer.addScaledVector(this.dirLocal, -toPlayer.dot(this.dirLocal)).normalize();
-      return toPlayer.lengthSq() > 0 ? 1.0 : 0.0;
+      if (toPlayer.lengthSq() < 1e-6) return 1.0;
+      return forwardWorld.dot(toPlayer);
     },
 
     checkCrawlerNearMiss: function () {
@@ -1365,8 +1369,17 @@ function spawnSingleZombie(candidateDir, targetType, isBoss, typeOverride) {
   // Alinhamento tangencial inicial exato com orientação para o sobrevivente
   zUp.copy(candidateDir).normalize();
   zForward.copy(state.playerLocalDir).addScaledVector(zUp, -state.playerLocalDir.dot(zUp));
-  if (zForward.lengthSq() < 1e-6) zForward.set(0, 0, 1).addScaledVector(zUp, -zUp.z);
+  if (zForward.lengthSq() < 1e-6) {
+    if (freeZombie.lastForward && freeZombie.lastForward.lengthSq() > 1e-6) {
+      zForward.copy(freeZombie.lastForward).addScaledVector(zUp, -freeZombie.lastForward.dot(zUp));
+    }
+  }
+  if (zForward.lengthSq() < 1e-6) {
+    var ortho = Math.abs(zUp.x) > 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+    zForward.crossVectors(ortho, zUp);
+  }
   zForward.normalize();
+  freeZombie.lastForward.copy(zForward);
   zRight.crossVectors(zUp, zForward).normalize();
   zRotMatrix.makeBasis(zRight, zUp, zForward);
   zTargetQuat.setFromRotationMatrix(zRotMatrix);
@@ -1440,8 +1453,17 @@ export function updateEnemies(dt) {
       // Mantém orientação coerente com a superfície e encarando o sobrevivente
       zUp.copy(z.dirLocal).normalize();
       zForward.copy(state.playerLocalDir).addScaledVector(zUp, -state.playerLocalDir.dot(zUp));
-      if (zForward.lengthSq() < 1e-6) zForward.set(0, 0, 1).addScaledVector(zUp, -zUp.z);
+      if (zForward.lengthSq() < 1e-6) {
+        if (z.lastForward && z.lastForward.lengthSq() > 1e-6) {
+          zForward.copy(z.lastForward).addScaledVector(zUp, -z.lastForward.dot(zUp));
+        }
+      }
+      if (zForward.lengthSq() < 1e-6) {
+        var ortho = Math.abs(zUp.x) > 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+        zForward.crossVectors(ortho, zUp);
+      }
       zForward.normalize();
+      z.lastForward.copy(zForward);
       zRight.crossVectors(zUp, zForward).normalize();
       zRotMatrix.makeBasis(zRight, zUp, zForward);
       zTargetQuat.setFromRotationMatrix(zRotMatrix);
@@ -1787,21 +1809,31 @@ export function updateEnemies(dt) {
       var speedRatio = Math.min(2.5, effectiveSpeed / ZOMBIE_BASE_SPEED);
 
       if (z.type === "crawler") {
-        // Rastejante: corpo colado ao solo, ondulação sinuosa lateral
+        // Rastejante: corpo colado ao solo, oscilação de passada em rotation.x
         z.torso.position.y = 0.07 + Math.sin(phase) * 0.02;
-        z.torso.rotation.y = Math.sin(phase) * 0.35;
-        z.armL.rotation.y = Math.sin(phase) * 0.45;
-        z.armR.rotation.y = -Math.sin(phase) * 0.45;
-        z.legL.rotation.y = -Math.sin(phase) * 0.40;
-        z.legR.rotation.y = Math.sin(phase) * 0.40;
+        z.torso.rotation.x = Math.sin(phase) * 0.35;
+        z.torso.rotation.y = 0;
+        z.armL.rotation.x = -Math.PI / 2 + Math.sin(phase) * 0.45;
+        z.armR.rotation.x = -Math.PI / 2 - Math.sin(phase) * 0.45;
+        z.armL.rotation.y = 0;
+        z.armR.rotation.y = 0;
+        z.legL.rotation.x = -Math.sin(phase) * 0.40;
+        z.legR.rotation.x = Math.sin(phase) * 0.40;
+        z.legL.rotation.y = 0;
+        z.legR.rotation.y = 0;
       } else {
         z.legL.rotation.x = Math.sin(phase) * (ZOMBIE_WALK_CONFIG.legAmplitude * speedRatio);
         z.legR.rotation.x = -Math.sin(phase) * (ZOMBIE_WALK_CONFIG.legAmplitude * speedRatio);
+        z.legL.rotation.y = 0;
+        z.legR.rotation.y = 0;
 
         z.armL.rotation.x = -Math.PI / 2 + Math.sin(phase * 0.95) * (ZOMBIE_WALK_CONFIG.armSwingBase * speedRatio);
         z.armR.rotation.x = -Math.PI / 2 - Math.sin(phase * 1.05 + 0.35) * (ZOMBIE_WALK_CONFIG.armSwingBase * speedRatio);
+        z.armL.rotation.y = 0;
+        z.armR.rotation.y = 0;
         z.torso.position.y = 0.29 + Math.abs(Math.sin(phase)) * (ZOMBIE_WALK_CONFIG.bobAmplitude * speedRatio);
         z.torso.rotation.x = 0;
+        z.torso.rotation.y = 0;
       }
     }
 
@@ -1840,8 +1872,17 @@ export function updateEnemies(dt) {
     // Orientação tangencial
     zUp.copy(z.dirLocal).normalize();
     zForward.copy(state.playerLocalDir).addScaledVector(zUp, -state.playerLocalDir.dot(zUp));
-    if (zForward.lengthSq() < 1e-6) zForward.set(0, 0, 1).addScaledVector(zUp, -zUp.z);
+    if (zForward.lengthSq() < 1e-6) {
+      if (z.lastForward && z.lastForward.lengthSq() > 1e-6) {
+        zForward.copy(z.lastForward).addScaledVector(zUp, -z.lastForward.dot(zUp));
+      }
+    }
+    if (zForward.lengthSq() < 1e-6) {
+      var ortho = Math.abs(zUp.x) > 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+      zForward.crossVectors(ortho, zUp);
+    }
     zForward.normalize();
+    z.lastForward.copy(zForward);
 
     zRight.crossVectors(zUp, zForward).normalize();
     zRotMatrix.makeBasis(zRight, zUp, zForward);

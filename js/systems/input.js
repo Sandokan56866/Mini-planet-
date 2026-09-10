@@ -46,14 +46,28 @@ export function initInput() {
         state.combat.triggerBomb();
       }
     }
+
+    // Tecla M para posicionar Mina
+    if (e.code === "KeyM" && !e.repeat) {
+      if (state.ui && state.ui.deployMine) {
+        state.ui.deployMine();
+      }
+    }
+
+    // Tecla T para posicionar Torreta
+    if (e.code === "KeyT" && !e.repeat) {
+      if (state.ui && state.ui.deployTurret) {
+        state.ui.deployTurret();
+      }
+    }
   });
 
   window.addEventListener("keyup", function (e) {
     state.keys[e.code] = false;
   });
 
-  // Botão circular da Bomba
-  function bindBombButton() {
+  // Botão circular da Bomba e Botões de Dispositivo (Mina e Torreta)
+  function bindActionButtons() {
     bombBtn = document.getElementById("btn-bomb");
     if (bombBtn && !bombBtn.dataset.bound) {
       bombBtn.dataset.bound = "true";
@@ -72,11 +86,48 @@ export function initInput() {
       bombBtn.addEventListener("click", onBombTrigger);
       bombBtn.addEventListener("touchstart", onBombTrigger, { passive: false });
     }
+
+    var mineBtn = document.getElementById("btn-mine");
+    if (mineBtn && !mineBtn.dataset.bound) {
+      mineBtn.dataset.bound = "true";
+      var onMineTrigger = function (e) {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        if (state.isPaused || state.isGameOver || state.isLevelUpPaused || !state.gameStarted) {
+          return;
+        }
+        if (state.ui && state.ui.deployMine) {
+          state.ui.deployMine();
+        }
+      };
+      mineBtn.addEventListener("click", onMineTrigger);
+      mineBtn.addEventListener("touchstart", onMineTrigger, { passive: false });
+    }
+
+    var turretBtn = document.getElementById("btn-turret");
+    if (turretBtn && !turretBtn.dataset.bound) {
+      turretBtn.dataset.bound = "true";
+      var onTurretTrigger = function (e) {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        if (state.isPaused || state.isGameOver || state.isLevelUpPaused || !state.gameStarted) {
+          return;
+        }
+        if (state.ui && state.ui.deployTurret) {
+          state.ui.deployTurret();
+        }
+      };
+      turretBtn.addEventListener("click", onTurretTrigger);
+      turretBtn.addEventListener("touchstart", onTurretTrigger, { passive: false });
+    }
   }
 
-  bindBombButton();
-  // Se o botão for recriado pelo HUD, tenta re-vincular
-  setTimeout(bindBombButton, 200);
+  bindActionButtons();
+  setTimeout(bindActionButtons, 250);
 
   // Toques no Joystick Virtual (Touch)
   if (joystickArea) {
@@ -188,6 +239,10 @@ function isInteractiveUI(target) {
   if (!target) return false;
   return target.closest("#joystick-area") ||
          target.closest("#btn-bomb") ||
+         target.closest("#btn-mine") ||
+         target.closest("#btn-turret") ||
+         target.closest(".hud-devices-container") ||
+         target.closest(".hud-device-btn") ||
          target.closest("#pause-btn") ||
          target.closest("#pause-modal") ||
          target.closest(".pause-card") ||

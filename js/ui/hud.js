@@ -1,8 +1,9 @@
-// O que faz: Gerencia a interface do jogo: anéis circulares de Vida e Stamina, pílula compacta de progresso,
-// tela de início com botão JOGAR, tela de árvore de habilidades permanente, botão de mudo, menu de pausa e tela de fim de jogo com fragmentos.
+// O que faz: Gerencia a interface do jogo: anéis circulares de Vida e Stamina, barra fina de XP de 3px com toast de nível,
+// pílula central compacta com onda/abates e ícone do bioma (nome temporário de 3s), pílula de arma equipada, botões de áudio e pausa,
+// barra de slots de módulos/passivos nos modais de pausa e level-up, tela de início, árvore de habilidades e tela de fim de jogo.
 // Exporta: initHUD, updateHUD, updateHpUI, updateStaminaUI, updateXpUI, updateKillsUI, updateWaveUI, updateWaveProgressUI,
 // showBigAnnouncement, triggerDamageFlash, showStartScreen, hideStartScreen, showSkillTreeModal, hideSkillTreeModal, updateMuteButtonUI, updateBiomeUI,
-// showPauseModal, hidePauseModal, togglePauseGame.
+// showPauseModal, hidePauseModal, togglePauseGame, createEquipmentSlotsHTML.
 // Depende de: js/config.js, js/state.js, js/systems/audio.js, js/systems/meta.js
 
 import {
@@ -15,11 +16,17 @@ import {
   DRONE_TYPES,
   MODULES_CONFIG,
   PASSIVES_CONFIG,
-  RARITY_CONFIG
+  RARITY_CONFIG,
+  MAX_ACTIVE_TURRETS,
+  MAX_ACTIVE_MINES,
+  PLANET_BASE_RADIUS,
+  SEA_LEVEL
 } from "../config.js";
 import { state } from "../state.js";
 import { toggleMute, isMuted } from "../systems/audio.js";
 import { getFragments, addFragments, calculateRunFragments, renderSkillTreeUI } from "../systems/meta.js";
+import { getStepIndex, radiusAt } from "../core/math.js";
+import { spawnMine, spawnTurret, isPointBlockedByColliders, triggerPlacementPulse } from "../systems/pickups.js";
 
 // Elementos dos Anéis Circulares (Canto superior esquerdo)
 var hpRingContainer = null;
@@ -27,25 +34,34 @@ var hpRingProgress = null;
 var staminaRingContainer = null;
 var staminaRingProgress = null;
 
-// Elementos de Armas e Itens (Centro Superior)
+// Elementos de Nível e Barra de XP (3px)
+var xpBarContainerEl = null;
+var xpBarFillEl = null;
+var levelToastEl = null;
+var levelToastTimer = null;
+var lastReportedLevel = 1;
+
+// Elementos de Arma Equipada (Abaixo dos anéis)
 var weaponPillEl = null;
 var weaponIconEl = null;
 var weaponNameEl = null;
 var weaponAmmoEl = null;
-var devicePillEl = null;
-var deviceCountEl = null;
 var weaponToastEl = null;
 var weaponToastTimer = null;
 
-// Elementos da Pílula Compacta e FPS (Canto superior direito)
+// Elementos da Pílula Central Compacta (Onda e Abates + Bioma)
 var compactPillEl = null;
-var pillWaveEl = null;
-var pillKillsEl = null;
-var pillLevelEl = null;
-var pillXpEl = null;
+var waveProgressTextEl = null;
 var biomeDisplayEl = null;
+var biomeIconEl = null;
+var biomeNameEl = null;
+var biomeToastTimer = null;
+var lastBiomeName = "";
+
+// Elementos do Canto Superior Direito
 var fpsCounterEl = null;
 var audioMuteBtnEl = null;
+var pauseBtnEl = null;
 
 // Efeitos visuais e modais
 var lowHpVignetteEl = null;
@@ -68,7 +84,7 @@ var finalLevelEl = null;
 var finalTimeEl = null;
 var gameoverFragBlockEl = null;
 
-// Novos Modais: Tela de Início e Árvore de Habilidades
+// Modais: Tela de Início e Árvore de Habilidades
 var startScreenModal = null;
 var startPlayBtn = null;
 var startSkillsBtn = null;
@@ -77,8 +93,7 @@ var skillsTreeModal = null;
 var skillsTreeContent = null;
 var skillsTreeCloseBtn = null;
 
-// Modal de Pausa e Botão de Pausa
-var pauseBtnEl = null;
+// Modal de Pausa
 var pauseModal = null;
 var pauseTimeValEl = null;
 var pauseWaveValEl = null;
@@ -140,81 +155,188 @@ export function updateStaminaUI() {
 }
 
 // ==========================================
-// 3. PÍLULA COMPACTA DE INFORMAÇÕES E ARMAS
+// 3. BARRA DE XP (3px) E NÍVEL (TOAST DE 2s)
 // ==========================================
+export function showLevelUpToast(level) {
+  if (!levelToastEl) {
+    levelToastEl = document.getElementById("level-toast");
+  }
+  if (!levelToastEl) return;
+
+  levelToastEl.textContent = "Nv. " + level;
+  levelToastEl.classList.remove("show");
+  void levelToastEl.offsetWidth;
+  levelToastEl.classList.add("show");
+
+  if (levelToastTimer) clearTimeout(levelToastTimer);
+  levelToastTimer = setTimeout(function () {
+    if (levelToastEl) levelToastEl.classList.remove("show");
+  }, 2000);
+}
+
+export function updateXpUI() {
+  var curXp = state.playerXp || 0;
+  var needXp = state.xpNeeded || 100;
+  var pct = Math.min(1, Math.max(0, curXp / needXp));
+
+  if (!xpBarFillEl) {
+    xpBarFillEl = document.getElementById("xp-bar-fill");
+  }
+  if (xpBarFillEl) {
+    xpBarFillEl.style.width = (pct * 100).toFixed(1) + "%";
+  }
+
+  var curLvl = state.playerLevel || 1;
+  if (curLvl > lastReportedLevel) {
+    showLevelUpToast(curLvl);
+    lastReportedLevel = curLvl;
+  }
+}
+
+// ==========================================
+// 4. PÍLULA CENTRAL: ONDA E PROGRESSO DE ABATES
+// ==========================================
+export function updateWaveProgressUI(currentKills, targetKills) {
+  var wave = state.currentWave || 1;
+  var kills = (currentKills !== undefined) ? currentKills : (state.waveKills !== undefined ? state.waveKills : (state.killsCount || 0));
+  var target = (targetKills !== undefined) ? targetKills : (state.waveTargetKills || 30);
+
+  if (!waveProgressTextEl) {
+    waveProgressTextEl = document.getElementById("pill-wave-progress");
+  }
+  if (waveProgressTextEl) {
+    waveProgressTextEl.textContent = "Onda " + wave + " · " + kills + "/" + target;
+  }
+}
+
+export function updateWaveUI() {
+  updateWaveProgressUI();
+}
+
+export function updateKillsUI() {
+  updateWaveProgressUI();
+}
+
 export function updateCompactPill() {
-  if (pillWaveEl) pillWaveEl.textContent = "Onda " + (state.currentWave || 1);
-  if (pillKillsEl) pillKillsEl.textContent = (state.killsCount || 0) + " 💀";
-  if (pillLevelEl) pillLevelEl.textContent = "N" + (state.playerLevel || 1);
-  if (pillXpEl) pillXpEl.textContent = Math.floor(state.playerXp || 0) + "/" + (state.xpNeeded || 100);
+  updateWaveProgressUI();
   updateEquipmentSlotsUI();
 }
 
+// ==========================================
+// 5. ATUALIZAÇÃO DO BIOMA (ÍCONE + NOME 3s)
+// ==========================================
+export function updateBiomeUI(icon, name, color) {
+  if (!biomeIconEl) biomeIconEl = document.getElementById("biome-icon");
+  if (!biomeNameEl) biomeNameEl = document.getElementById("biome-name");
+
+  var curIcon = icon || "🏙️";
+  var curName = name || "Subúrbio";
+
+  if (biomeIconEl) {
+    biomeIconEl.textContent = curIcon;
+    if (color) biomeIconEl.style.color = color;
+  }
+
+  if (biomeNameEl) {
+    biomeNameEl.textContent = curName;
+    if (color) biomeNameEl.style.color = color;
+
+    if (curName !== lastBiomeName) {
+      lastBiomeName = curName;
+      biomeNameEl.classList.remove("show-name");
+      void biomeNameEl.offsetWidth;
+      biomeNameEl.classList.add("show-name");
+
+      if (biomeToastTimer) clearTimeout(biomeToastTimer);
+      biomeToastTimer = setTimeout(function () {
+        if (biomeNameEl) biomeNameEl.classList.remove("show-name");
+      }, 3000);
+    }
+  }
+}
+
+// ==========================================
+// 6. SLOTS DE EQUIPAMENTO (MODAIS DE PAUSA E LEVEL-UP)
+// ==========================================
+export function createEquipmentSlotsHTML() {
+  return (
+    '<div class="equipment-slots-bar in-modal">' +
+      '<div class="slots-section slots-section-modules" title="Módulos Equipados (3 slots)">' +
+        '<span class="slots-header-tag mod-tag">MOD</span>' +
+        '<div class="slot-box slot-module empty" data-slot="mod-0"></div>' +
+        '<div class="slot-box slot-module empty" data-slot="mod-1"></div>' +
+        '<div class="slot-box slot-module empty" data-slot="mod-2"></div>' +
+      '</div>' +
+      '<div class="slots-divider"></div>' +
+      '<div class="slots-section slots-section-passives" title="Passivos Equipados (4 slots)">' +
+        '<span class="slots-header-tag pas-tag">PAS</span>' +
+        '<div class="slot-box slot-passive empty" data-slot="pas-0"></div>' +
+        '<div class="slot-box slot-passive empty" data-slot="pas-1"></div>' +
+        '<div class="slot-box slot-passive empty" data-slot="pas-2"></div>' +
+        '<div class="slot-box slot-passive empty" data-slot="pas-3"></div>' +
+      '</div>' +
+    '</div>'
+  );
+}
+
 export function updateEquipmentSlotsUI() {
-  var bar = document.getElementById("equipment-slots-bar");
-  if (!bar) return;
+  var bars = document.querySelectorAll(".equipment-slots-bar");
+  if (!bars || bars.length === 0) return;
 
   var equippedMods = state.equippedModules || [];
   var equippedPass = state.equippedPassives || [];
 
-  for (var m = 0; m < 3; m++) {
-    var slotEl = document.getElementById("mod-slot-" + m);
-    if (!slotEl) continue;
-    if (m < equippedMods.length) {
-      var mKey = equippedMods[m];
-      var mUpg = (state.upgrades && state.upgrades[mKey]) || MODULES_CONFIG[mKey];
-      var mRank = mUpg ? (mUpg.rank !== undefined ? mUpg.rank : (mUpg.level || 1)) : 1;
-      var mIcon = (mUpg && mUpg.icon) || "⚙️";
-      slotEl.className = "slot-box slot-module filled";
-      slotEl.innerHTML = '<span class="slot-icon">' + mIcon + '</span><span class="slot-rank">' + mRank + '</span>';
-      slotEl.title = (mUpg ? mUpg.name : mKey) + " (Nv." + mRank + ")";
-    } else {
-      slotEl.className = "slot-box slot-module empty";
-      slotEl.innerHTML = "";
-      slotEl.title = "Slot de Módulo Vazio (" + (3 - equippedMods.length) + " restantes)";
+  bars.forEach(function (bar) {
+    for (var m = 0; m < 3; m++) {
+      var slotEl = bar.querySelector('[data-slot="mod-' + m + '"]') || bar.querySelector("#mod-slot-" + m);
+      if (!slotEl) continue;
+      if (m < equippedMods.length) {
+        var mKey = equippedMods[m];
+        var mUpg = (state.upgrades && state.upgrades[mKey]) || MODULES_CONFIG[mKey];
+        var mRank = mUpg ? (mUpg.rank !== undefined ? mUpg.rank : (mUpg.level || 1)) : 1;
+        var mIcon = (mUpg && mUpg.icon) || "⚙️";
+        slotEl.className = "slot-box slot-module filled";
+        slotEl.innerHTML = '<span class="slot-icon">' + mIcon + '</span><span class="slot-rank">' + mRank + '</span>';
+        slotEl.title = (mUpg ? mUpg.name : mKey) + " (Nv." + mRank + ")";
+      } else {
+        slotEl.className = "slot-box slot-module empty";
+        slotEl.innerHTML = "";
+        slotEl.title = "Slot de Módulo Vazio (" + (3 - equippedMods.length) + " restantes)";
+      }
     }
-  }
 
-  for (var p = 0; p < 4; p++) {
-    var pSlotEl = document.getElementById("pas-slot-" + p);
-    if (!pSlotEl) continue;
-    if (p < equippedPass.length) {
-      var pKey = equippedPass[p];
-      var pUpg = (state.upgrades && state.upgrades[pKey]) || PASSIVES_CONFIG[pKey];
-      var pRank = pUpg ? (pUpg.rank !== undefined ? pUpg.rank : (pUpg.level || 1)) : 1;
-      var pIcon = (pUpg && pUpg.icon) || "⚡";
-      pSlotEl.className = "slot-box slot-passive filled";
-      pSlotEl.innerHTML = '<span class="slot-icon">' + pIcon + '</span><span class="slot-rank">' + pRank + '</span>';
-      pSlotEl.title = (pUpg ? pUpg.name : pKey) + " (Nv." + pRank + ")";
-    } else {
-      pSlotEl.className = "slot-box slot-passive empty";
-      pSlotEl.innerHTML = "";
-      pSlotEl.title = "Slot de Passivo Vazio (" + (4 - equippedPass.length) + " restantes)";
+    for (var p = 0; p < 4; p++) {
+      var pSlotEl = bar.querySelector('[data-slot="pas-' + p + '"]') || bar.querySelector("#pas-slot-" + p);
+      if (!pSlotEl) continue;
+      if (p < equippedPass.length) {
+        var pKey = equippedPass[p];
+        var pUpg = (state.upgrades && state.upgrades[pKey]) || PASSIVES_CONFIG[pKey];
+        var pRank = pUpg ? (pUpg.rank !== undefined ? pUpg.rank : (pUpg.level || 1)) : 1;
+        var pIcon = (pUpg && pUpg.icon) || "⚡";
+        pSlotEl.className = "slot-box slot-passive filled";
+        pSlotEl.innerHTML = '<span class="slot-icon">' + pIcon + '</span><span class="slot-rank">' + pRank + '</span>';
+        pSlotEl.title = (pUpg ? pUpg.name : pKey) + " (Nv." + pRank + ")";
+      } else {
+        pSlotEl.className = "slot-box slot-passive empty";
+        pSlotEl.innerHTML = "";
+        pSlotEl.title = "Slot de Passivo Vazio (" + (4 - equippedPass.length) + " restantes)";
+      }
     }
-  }
-}
-
-export function updateXpUI() {
-  updateCompactPill();
-}
-
-export function updateKillsUI() {
-  updateCompactPill();
-}
-
-export function updateWaveUI() {
-  updateCompactPill();
-}
-
-export function updateWaveProgressUI() {
-  updateCompactPill();
+  });
 }
 
 export function updateDayNightUI() {}
 
+// ==========================================
+// 7. PÍLULA DE ARMA EQUIPADA COM MUNIÇÃO
+// ==========================================
 export function updateWeaponUI() {
   var currentKey = state.currentWeapon || "pistol";
   var wConfig = WEAPONS_CONFIG[currentKey] || WEAPONS_CONFIG.pistol;
+
+  if (!weaponIconEl) weaponIconEl = document.getElementById("weapon-icon");
+  if (!weaponNameEl) weaponNameEl = document.getElementById("weapon-name");
+  if (!weaponAmmoEl) weaponAmmoEl = document.getElementById("weapon-ammo");
 
   if (weaponIconEl) weaponIconEl.textContent = wConfig.icon || "🔫";
   if (weaponNameEl) weaponNameEl.textContent = wConfig.name || "Pistola";
@@ -230,12 +352,195 @@ export function updateWeaponUI() {
     }
   }
 
-  if (deviceCountEl) {
-    var mines = state.playerMinesCount !== undefined ? state.playerMinesCount : 3;
-    deviceCountEl.textContent = mines;
-    if (devicePillEl) {
-      if (mines === 0) devicePillEl.classList.add("empty");
-      else devicePillEl.classList.remove("empty");
+  updateDevicesUI();
+}
+
+// ==========================================
+// 8. DISPOSITIVOS: MINAS E TORRETAS (CANTO INFERIOR DIREITO)
+// ==========================================
+var lastDeployMineTime = 0;
+export function deployMine() {
+  var now = performance.now();
+  if (now - lastDeployMineTime < 150) return;
+  lastDeployMineTime = now;
+
+  if (state.isPaused || state.isGameOver || state.isLevelUpPaused || !state.gameStarted) {
+    return;
+  }
+
+  var btn = document.getElementById("btn-mine");
+  var count = (state.playerMinesCount !== undefined) ? state.playerMinesCount : (state.minesCount || 0);
+
+  if (count <= 0) {
+    if (btn) {
+      btn.classList.add("shake-error");
+      setTimeout(function () { btn.classList.remove("shake-error"); }, 380);
+    }
+    state.sounds?.playHitSound?.();
+    return;
+  }
+
+  var playerDir = state.playerLocalDir;
+  if (!playerDir) return;
+
+  var isWater = (getStepIndex(playerDir) < 0) || (radiusAt(playerDir) < PLANET_BASE_RADIUS + SEA_LEVEL + 0.05);
+  var isBlocked = isPointBlockedByColliders(playerDir);
+
+  if (isWater || isBlocked) {
+    if (btn) {
+      btn.classList.add("shake-error");
+      setTimeout(function () { btn.classList.remove("shake-error"); }, 380);
+    }
+    state.sounds?.playHitSound?.();
+    showWeaponNotification(isWater ? "TERRENO INVÁLIDO (ÁGUA)!" : "OBSTÁCULO NO PONTO DE PLANTIO!");
+    return;
+  }
+
+  var activeMines = 0;
+  var pool = state.minePool || [];
+  for (var i = 0; i < pool.length; i++) {
+    if (pool[i].active) activeMines++;
+  }
+  if (activeMines >= MAX_ACTIVE_MINES) {
+    if (btn) {
+      btn.classList.add("shake-error");
+      setTimeout(function () { btn.classList.remove("shake-error"); }, 380);
+    }
+    state.sounds?.playHitSound?.();
+    showWeaponNotification("MÁXIMO DE MINAS EM CAMPO (" + MAX_ACTIVE_MINES + ")!");
+    return;
+  }
+
+  spawnMine(playerDir.clone());
+  triggerPlacementPulse(playerDir.clone(), 0xef4444);
+
+  state.playerMinesCount = Math.max(0, count - 1);
+  state.minesCount = state.playerMinesCount;
+
+  state.sounds?.playMinePlantSound?.();
+  updateDevicesUI();
+}
+
+var lastDeployTurretTime = 0;
+export function deployTurret() {
+  var now = performance.now();
+  if (now - lastDeployTurretTime < 150) return;
+  lastDeployTurretTime = now;
+
+  if (state.isPaused || state.isGameOver || state.isLevelUpPaused || !state.gameStarted) {
+    return;
+  }
+
+  var btn = document.getElementById("btn-turret");
+  var count = (state.playerTurretsCount !== undefined) ? state.playerTurretsCount : 0;
+
+  if (count <= 0) {
+    if (btn) {
+      btn.classList.add("shake-error");
+      setTimeout(function () { btn.classList.remove("shake-error"); }, 380);
+    }
+    state.sounds?.playHitSound?.();
+    return;
+  }
+
+  var playerDir = state.playerLocalDir;
+  if (!playerDir) return;
+
+  var isWater = (getStepIndex(playerDir) < 0) || (radiusAt(playerDir) < PLANET_BASE_RADIUS + SEA_LEVEL + 0.05);
+  var isBlocked = isPointBlockedByColliders(playerDir);
+
+  if (isWater || isBlocked) {
+    if (btn) {
+      btn.classList.add("shake-error");
+      setTimeout(function () { btn.classList.remove("shake-error"); }, 380);
+    }
+    state.sounds?.playHitSound?.();
+    showWeaponNotification(isWater ? "TERRENO INVÁLIDO (ÁGUA)!" : "OBSTÁCULO NO PONTO DE INSTALAÇÃO!");
+    return;
+  }
+
+  var activeTurrets = 0;
+  var pool = state.turretPool || [];
+  for (var i = 0; i < pool.length; i++) {
+    if (pool[i].active) activeTurrets++;
+  }
+  if (activeTurrets >= MAX_ACTIVE_TURRETS) {
+    if (btn) {
+      btn.classList.add("shake-error");
+      setTimeout(function () { btn.classList.remove("shake-error"); }, 380);
+    }
+    state.sounds?.playHitSound?.();
+    showWeaponNotification("MÁXIMO DE TORRETAS EM CAMPO (" + MAX_ACTIVE_TURRETS + ")!");
+    return;
+  }
+
+  spawnTurret(playerDir.clone());
+  triggerPlacementPulse(playerDir.clone(), 0x38bdf8);
+
+  state.playerTurretsCount = Math.max(0, count - 1);
+
+  state.sounds?.playDeploySound?.();
+  updateDevicesUI();
+}
+
+export function updateDevicesUI() {
+  var mineCount = (state.playerMinesCount !== undefined) ? state.playerMinesCount : (state.minesCount || 0);
+  var mineBadge = document.getElementById("mine-badge");
+  if (mineBadge) mineBadge.textContent = mineCount;
+
+  var mineBtn = document.getElementById("btn-mine");
+  if (mineBtn) {
+    var activeMines = 0;
+    var mPool = state.minePool || [];
+    for (var m = 0; m < mPool.length; m++) {
+      if (mPool[m].active) activeMines++;
+    }
+    var isMineFull = activeMines >= MAX_ACTIVE_MINES;
+
+    if (mineCount <= 0) {
+      mineBtn.classList.add("disabled");
+      mineBtn.classList.remove("limit-reached");
+      mineBtn.setAttribute("disabled", "true");
+    } else {
+      mineBtn.classList.remove("disabled");
+      mineBtn.removeAttribute("disabled");
+      if (isMineFull) {
+        mineBtn.classList.add("limit-reached");
+        mineBtn.setAttribute("title", "Limite de minas em campo (" + MAX_ACTIVE_MINES + ")");
+      } else {
+        mineBtn.classList.remove("limit-reached");
+        mineBtn.setAttribute("title", "Plantar Mina de Proximidade [M]");
+      }
+    }
+  }
+
+  var turretCount = (state.playerTurretsCount !== undefined) ? state.playerTurretsCount : 0;
+  var turretBadge = document.getElementById("turret-badge");
+  if (turretBadge) turretBadge.textContent = turretCount;
+
+  var turretBtn = document.getElementById("btn-turret");
+  if (turretBtn) {
+    var activeTurrets = 0;
+    var tPool = state.turretPool || [];
+    for (var t = 0; t < tPool.length; t++) {
+      if (tPool[t].active) activeTurrets++;
+    }
+    var isTurretFull = activeTurrets >= MAX_ACTIVE_TURRETS;
+
+    if (turretCount <= 0) {
+      turretBtn.classList.add("disabled");
+      turretBtn.classList.remove("limit-reached");
+      turretBtn.setAttribute("disabled", "true");
+    } else {
+      turretBtn.classList.remove("disabled");
+      turretBtn.removeAttribute("disabled");
+      if (isTurretFull) {
+        turretBtn.classList.add("limit-reached");
+        turretBtn.setAttribute("title", "Máximo de torretas em campo (" + MAX_ACTIVE_TURRETS + ")");
+      } else {
+        turretBtn.classList.remove("limit-reached");
+        turretBtn.setAttribute("title", "Instalar Torreta Automática [T]");
+      }
     }
   }
 
@@ -281,6 +586,7 @@ export function updateDroneIndicatorUI() {
 }
 
 export function showWeaponNotification(text) {
+  if (!weaponToastEl) weaponToastEl = document.getElementById("weapon-toast");
   if (!weaponToastEl) return;
   weaponToastEl.textContent = text;
   weaponToastEl.classList.remove("show");
@@ -293,8 +599,15 @@ export function showWeaponNotification(text) {
   }, 2400);
 }
 
+export function showItemNotification(text, color) {
+  showWeaponNotification(text);
+  if (weaponToastEl && color) {
+    weaponToastEl.style.borderColor = color;
+  }
+}
+
 // ==========================================
-// 4. ANÚNCIOS GRANDES E EFEITOS DE TELA
+// 9. ANÚNCIOS GRANDES E EFEITOS DE TELA
 // ==========================================
 export function showBigAnnouncement(title, subtitle, durationMs) {
   if (!bigAnnouncerEl || !bigWaveTitleEl || !bigWaveSubEl) return;
@@ -355,7 +668,7 @@ export function hideBossBar() {
 }
 
 // ==========================================
-// 5. MODAL DE LEVEL UP E SELEÇÃO DE DRONE
+// 10. MODAL DE LEVEL UP E SELEÇÃO DE DRONE
 // ==========================================
 export function showLevelUpModal(cards, onSelect) {
   hidePauseModal();
@@ -376,6 +689,18 @@ export function showLevelUpModal(cards, onSelect) {
     setTimeout(function () {
       if (levelFlashEl) levelFlashEl.classList.remove("flash");
     }, 200);
+  }
+
+  // Garante que os slots de equipamento apareçam no modal de level-up
+  var lvlContainer = levelupModal.querySelector(".levelup-container");
+  if (lvlContainer && !lvlContainer.querySelector("#levelup-equipment-slots")) {
+    var lvlSlotsSec = document.createElement("div");
+    lvlSlotsSec.id = "levelup-equipment-slots";
+    lvlSlotsSec.className = "modal-equipment-section";
+    lvlSlotsSec.innerHTML =
+      '<div class="modal-slots-label">MÓDULOS E PASSIVOS EQUIPADOS</div>' +
+      createEquipmentSlotsHTML();
+    lvlContainer.insertBefore(lvlSlotsSec, upgradeCardsGrid);
   }
 
   cards.forEach(function (key) {
@@ -449,6 +774,7 @@ export function showLevelUpModal(cards, onSelect) {
     upgradeCardsGrid.appendChild(btn);
   });
 
+  updateEquipmentSlotsUI();
   levelupModal.style.display = "flex";
 }
 
@@ -498,6 +824,7 @@ export function showDroneSelectionModal(onSelect) {
     upgradeCardsGrid.appendChild(btn);
   });
 
+  updateEquipmentSlotsUI();
   levelupModal.style.display = "flex";
 }
 
@@ -507,9 +834,10 @@ export function hideLevelUpModal() {
 }
 
 // ==========================================
-// 6. CONTROLE DE MUDO (ÁUDIO)
+// 11. CONTROLE DE MUDO (ÁUDIO)
 // ==========================================
 export function updateMuteButtonUI(muted) {
+  if (!audioMuteBtnEl) audioMuteBtnEl = document.getElementById("audio-mute-btn");
   if (!audioMuteBtnEl) return;
   audioMuteBtnEl.textContent = muted ? "🔇" : "🔊";
   audioMuteBtnEl.setAttribute("aria-label", muted ? "Ativar som" : "Desativar som");
@@ -517,7 +845,7 @@ export function updateMuteButtonUI(muted) {
 }
 
 // ==========================================
-// 7. TELA DE INÍCIO ("JOGAR" / "HABILIDADES")
+// 12. TELA DE INÍCIO ("JOGAR" / "HABILIDADES")
 // ==========================================
 export function showStartScreen(isRestart) {
   hidePauseModal();
@@ -525,57 +853,77 @@ export function showStartScreen(isRestart) {
   if (startFragValEl) {
     startFragValEl.textContent = getFragments();
   }
-  if (startPlayBtn) {
-    startPlayBtn.textContent = isRestart ? "JOGAR NOVAMENTE" : "JOGAR";
+
+  var subtitle = startScreenModal.querySelector(".start-subtitle");
+  if (subtitle) {
+    subtitle.textContent = isRestart
+      ? "Pronto para outra tentativa? Aprimore seus atributos e enfrente o planeta."
+      : "Sobreviva às hordas e expanda seu arsenal no relevo dinâmico do planeta.";
   }
+
+  if (startPlayBtn) {
+    startPlayBtn.textContent = isRestart ? "NOVA PARTIDA" : "JOGAR";
+  }
+
   startScreenModal.style.display = "flex";
 }
 
 export function hideStartScreen() {
-  if (startScreenModal) startScreenModal.style.display = "none";
+  if (startScreenModal) {
+    startScreenModal.style.display = "none";
+  }
 }
 
 // ==========================================
-// 8. TELA DA ÁRVORE DE HABILIDADES PERMANENTE
+// 13. MODAL DA ÁRVORE DE HABILIDADES PERMANENTES
 // ==========================================
 export function showSkillTreeModal() {
   if (!skillsTreeModal || !skillsTreeContent) return;
   renderSkillTreeUI(skillsTreeContent, function () {
-    if (startFragValEl) startFragValEl.textContent = getFragments();
+    if (startFragValEl) {
+      startFragValEl.textContent = getFragments();
+    }
   });
   skillsTreeModal.style.display = "flex";
 }
 
 export function hideSkillTreeModal() {
-  if (skillsTreeModal) skillsTreeModal.style.display = "none";
+  if (skillsTreeModal) {
+    skillsTreeModal.style.display = "none";
+  }
+  if (startFragValEl) {
+    startFragValEl.textContent = getFragments();
+  }
 }
 
 // ==========================================
-// 9. MODAL DE FIM DE JOGO COM FRAGMENTOS
+// 14. TELA DE GAME OVER (FIM DE JOGO)
 // ==========================================
-export function showGameOverModal() {
+export function formatSurvivalTime(seconds) {
+  var sec = Math.floor(seconds || 0);
+  var m = Math.floor(sec / 60);
+  var s = sec % 60;
+  return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
+}
+
+export function showGameOverModal(kills, waves, level, timeStr) {
   hidePauseModal();
   if (!gameoverModal) return;
-  if (finalKillsEl) finalKillsEl.textContent = state.killsCount || 0;
-  if (finalWavesEl) finalWavesEl.textContent = state.currentWave || 1;
-  if (finalLevelEl) finalLevelEl.textContent = state.playerLevel || 1;
-  if (finalTimeEl) {
-    var survivedSec = Math.floor((Date.now() - (state.gameStartTime || Date.now())) / 1000);
-    finalTimeEl.textContent = survivedSec + "s";
-  }
 
-  // Calcula os fragmentos obtidos nesta partida
-  var earnedFragments = calculateRunFragments(state.currentWave || 1, state.killsCount || 0);
+  if (finalKillsEl) finalKillsEl.textContent = kills;
+  if (finalWavesEl) finalWavesEl.textContent = waves;
+  if (finalLevelEl) finalLevelEl.textContent = level;
+  if (finalTimeEl) finalTimeEl.textContent = timeStr;
+
+  var earnedFragments = calculateRunFragments(waves, kills);
   addFragments(earnedFragments);
 
   if (gameoverFragBlockEl) {
     gameoverFragBlockEl.innerHTML =
-      '<div class="gameover-frag-card">' +
-        '<div class="gameover-frag-row">' +
-          '<span class="gameover-frag-icon">💎</span>' +
-          '<span class="gameover-frag-earned">+' + earnedFragments + ' Fragmentos</span>' +
-        '</div>' +
-        '<div class="gameover-frag-total">Total acumulado: ' + getFragments() + ' 💎</div>' +
+      '<div class="gameover-frag-row">' +
+        '<span class="frag-icon">💎</span>' +
+        '<span class="frag-text">+' + earnedFragments + ' Fragmentos Meta Coletados!</span>' +
+        '<span class="frag-total">(Total: ' + getFragments() + ')</span>' +
       '</div>';
   }
 
@@ -583,18 +931,14 @@ export function showGameOverModal() {
 }
 
 export function hideGameOverModal() {
-  if (gameoverModal) gameoverModal.style.display = "none";
+  if (gameoverModal) {
+    gameoverModal.style.display = "none";
+  }
 }
 
 // ==========================================
-// 10. MODAL E CONTROLE DO MENU DE PAUSA
+// 15. MODAL DE MENU DE PAUSA (PAUSE)
 // ==========================================
-function formatSurvivalTime(seconds) {
-  var mins = Math.floor(seconds / 60);
-  var secs = seconds % 60;
-  return (mins < 10 ? "0" : "") + mins + ":" + (secs < 10 ? "0" : "") + secs;
-}
-
 export function showPauseModal() {
   if (!pauseModal) return;
   if (!state.gameStarted || state.isGameOver || state.isLevelUpPaused) return;
@@ -603,12 +947,10 @@ export function showPauseModal() {
   state.pauseStartTime = Date.now();
   document.body.classList.add("game-paused");
 
-  // Atenua áudio de ambiente
   if (state.attenuateAmbience) {
     state.attenuateAmbience(true);
   }
 
-  // Desativa joystick imediatamente
   state.joyTouchId = null;
   state.isJoystickActive = false;
   state.joyX = 0;
@@ -616,17 +958,33 @@ export function showPauseModal() {
   var knob = document.getElementById("joystick-knob");
   if (knob) knob.style.transform = "translate(0px, 0px)";
 
-  // Atualiza dados e estatísticas no painel de status da run
   var elapsedSec = Math.max(0, Math.floor((Date.now() - (state.gameStartTime || Date.now())) / 1000));
   if (pauseTimeValEl) pauseTimeValEl.textContent = formatSurvivalTime(elapsedSec);
   if (pauseWaveValEl) pauseWaveValEl.textContent = state.currentWave || 1;
   if (pauseLevelValEl) pauseLevelValEl.textContent = "Nv. " + (state.playerLevel || 1);
   if (pauseKillsValEl) pauseKillsValEl.textContent = (state.killsCount || 0) + " 💀";
 
-  // Fragmentos acumulados nesta run
   var earnedFrags = calculateRunFragments(state.currentWave || 1, state.killsCount || 0);
   if (pauseFragsValEl) pauseFragsValEl.textContent = "+" + earnedFrags + " 🔷";
 
+  // Garante que a barra de slots exista e esteja atualizada no modal de pausa
+  var pauseCard = pauseModal.querySelector(".pause-card");
+  if (pauseCard && !pauseCard.querySelector("#pause-equipment-slots")) {
+    var pauseSlotsSec = document.createElement("div");
+    pauseSlotsSec.id = "pause-equipment-slots";
+    pauseSlotsSec.className = "modal-equipment-section";
+    pauseSlotsSec.innerHTML =
+      '<div class="modal-slots-label">MÓDULOS E PASSIVOS EQUIPADOS</div>' +
+      createEquipmentSlotsHTML();
+    var actionsCol = pauseCard.querySelector(".pause-actions-col");
+    if (actionsCol) {
+      pauseCard.insertBefore(pauseSlotsSec, actionsCol);
+    } else {
+      pauseCard.appendChild(pauseSlotsSec);
+    }
+  }
+
+  updateEquipmentSlotsUI();
   pauseModal.style.display = "flex";
 }
 
@@ -636,7 +994,6 @@ export function hidePauseModal() {
   }
   document.body.classList.remove("game-paused");
 
-  // Congelamento de tempo: compensa o tempo decorrido durante a pausa para que nenhum temporizador avance
   if (state.pauseStartTime) {
     var pausedDuration = Date.now() - state.pauseStartTime;
     state.gameStartTime = (state.gameStartTime || Date.now()) + pausedDuration;
@@ -649,7 +1006,6 @@ export function hidePauseModal() {
   state.joyX = 0;
   state.joyY = 0;
 
-  // Restaura áudio de ambiente
   if (state.attenuateAmbience) {
     state.attenuateAmbience(false);
   }
@@ -665,480 +1021,133 @@ export function togglePauseGame() {
 }
 
 // ==========================================
-// 10. INICIALIZAÇÃO DO HUD E ELEMENTOS DE UI
+// 16. INICIALIZAÇÃO DO HUD E ELEMENTOS DE UI
 // ==========================================
 export function initHUD() {
   if (state.hudInitialized) {
     updateHpUI();
     updateStaminaUI();
-    updateCompactPill();
+    updateXpUI();
+    updateWaveProgressUI();
     updateWeaponUI();
+    updateDevicesUI();
     updateBombsUI();
     updateDroneIndicatorUI();
+    updateEquipmentSlotsUI();
     return;
   }
   state.hudInitialized = true;
 
-  // Limpa elementos obsoletos
-  var oldDashContainer = document.getElementById("dash-btn-container");
-  if (oldDashContainer) oldDashContainer.remove();
-
-  var hintPills = document.querySelectorAll(".hint-pill");
-  hintPills.forEach(function (el) { el.remove(); });
-
-  var oldCrosshair = document.getElementById("target-crosshair");
-  if (oldCrosshair) oldCrosshair.remove();
-
-  var oldDronePill = document.getElementById("drone-pill");
-  if (oldDronePill) oldDronePill.remove();
-
-  var oldZoomBtn = document.getElementById("cam-zoom-btn");
-  if (oldZoomBtn) oldZoomBtn.remove();
-
-  // Garante que o elemento de clarão branco da bomba exista
-  var whiteFlashEl = document.getElementById("white-flash");
-  if (!whiteFlashEl) {
-    whiteFlashEl = document.createElement("div");
-    whiteFlashEl.id = "white-flash";
-    whiteFlashEl.className = "white-flash";
-    document.body.appendChild(whiteFlashEl);
-  }
-
-  // Cria o botão de Bomba no lugar da antiga lupa no bottom-bar
-  var bombBtn = document.getElementById("btn-bomb");
-  if (!bombBtn) {
-    var bottomBar = document.querySelector(".bottom-bar");
-    var rightControls = bottomBar ? (bottomBar.children[1] || bottomBar) : document.body;
-    bombBtn = document.createElement("button");
-    bombBtn.id = "btn-bomb";
-    bombBtn.className = "btn-bomb";
-    bombBtn.setAttribute("title", "Lançar Bomba de Área [B]");
-    bombBtn.innerHTML =
-      '<span class="bomb-icon">💣</span>' +
-      '<span class="bomb-badge" id="bomb-badge">' + (state.bombsCount !== undefined ? state.bombsCount : 2) + '</span>';
-
-    bombBtn.addEventListener("pointerdown", function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      state.combat?.triggerBomb?.();
-    });
-
-    rightControls.appendChild(bombBtn);
-  }
-
-  // Cria o indicador estático e discreto do Drone Permanente
-  var droneIndicator = document.getElementById("drone-indicator");
-  if (!droneIndicator) {
-    droneIndicator = document.createElement("div");
-    droneIndicator.id = "drone-indicator";
-    droneIndicator.className = "drone-indicator";
-    droneIndicator.style.display = "none";
-    var uiOverlay = document.getElementById("ui-overlay") || document.body;
-    uiOverlay.appendChild(droneIndicator);
-  }
-
-  // Constrói Anéis Circulares e Pílula Compacta na Top Bar
-  var topBar = document.querySelector(".top-bar");
-  if (topBar) {
-    topBar.innerHTML = "";
-
-    // Linha Principal Superior: Anéis de status na esquerda e Estatísticas/Som na direita
-    var mainRow = document.createElement("div");
-    mainRow.className = "top-bar-main-row";
-
-    var ringsGroup = document.createElement("div");
-    ringsGroup.className = "rings-group";
-    ringsGroup.id = "rings-group";
-
-    // ANEL 1: VIDA
-    var hpWrap = document.createElement("div");
-    hpWrap.className = "ring-container ring-hp";
-    hpWrap.id = "hp-ring-container";
-    hpWrap.innerHTML =
-      '<svg class="ring-svg" viewBox="0 0 40 40">' +
-        '<circle class="ring-bg" cx="20" cy="20" r="16"></circle>' +
-        '<circle class="ring-progress ring-progress-hp" id="hp-ring-progress" cx="20" cy="20" r="16"></circle>' +
-      '</svg>' +
-      '<div class="ring-icon ring-icon-hp">' +
-        '<svg viewBox="0 0 24 24" width="16" height="16">' +
-          '<path fill="#ffffff" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>' +
-        '</svg>' +
-      '</div>';
-    ringsGroup.appendChild(hpWrap);
-
-    // ANEL 2: STAMINA
-    var staminaWrap = document.createElement("div");
-    staminaWrap.className = "ring-container ring-stamina";
-    staminaWrap.id = "stamina-ring-container";
-    staminaWrap.innerHTML =
-      '<svg class="ring-svg" viewBox="0 0 40 40">' +
-        '<circle class="ring-bg" cx="20" cy="20" r="16"></circle>' +
-        '<circle class="ring-progress ring-progress-stamina" id="stamina-ring-progress" cx="20" cy="20" r="16"></circle>' +
-      '</svg>' +
-      '<div class="ring-icon ring-icon-stamina">' +
-        '<svg viewBox="0 0 24 24" width="16" height="16">' +
-          '<path fill="#ffffff" d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>' +
-        '</svg>' +
-      '</div>';
-    ringsGroup.appendChild(staminaWrap);
-    mainRow.appendChild(ringsGroup);
-
-    // Estatísticas Compactas, Áudio e Barra de Equipamentos (Canto Superior Direito)
-    var statsCompactContainer = document.createElement("div");
-    statsCompactContainer.className = "stats-compact-container";
-
-    var statsTopRow = document.createElement("div");
-    statsTopRow.className = "stats-top-row";
-
-    var compactPill = document.createElement("div");
-    compactPill.className = "compact-pill";
-    compactPill.id = "compact-stats-pill";
-    compactPill.innerHTML =
-      '<span class="pill-item" id="pill-wave">Onda 1</span>' +
-      '<span class="pill-dot">•</span>' +
-      '<span class="pill-item" id="pill-kills">0 💀</span>' +
-      '<span class="pill-dot">•</span>' +
-      '<span class="pill-item" id="pill-level">N1</span>' +
-      '<span class="pill-dot">•</span>' +
-      '<span class="pill-item" id="pill-xp">0/120</span>' +
-      '<span class="pill-dot">•</span>' +
-      '<span class="pill-item" id="biome-display" style="color: #e2e8f0;">🏙️ Subúrbio</span>';
-    statsTopRow.appendChild(compactPill);
-
-    var fpsEl = document.createElement("div");
-    fpsEl.className = "fps-tiny";
-    fpsEl.id = "fps-counter";
-    fpsEl.textContent = "60 FPS";
-    statsTopRow.appendChild(fpsEl);
-
-    // Botão de Alternância de Som (Mudo)
-    var muteBtn = document.createElement("button");
-    muteBtn.className = "audio-mute-btn";
-    muteBtn.id = "audio-mute-btn";
-    muteBtn.textContent = isMuted() ? "🔇" : "🔊";
-    muteBtn.title = "Alternar Áudio";
-    muteBtn.addEventListener("click", function (e) {
-      e.stopPropagation();
-      var nowMuted = toggleMute();
-      updateMuteButtonUI(nowMuted);
-    });
-    statsTopRow.appendChild(muteBtn);
-
-    // Botão de Pausa no Topo Direito
-    var pauseBtn = document.createElement("button");
-    pauseBtn.className = "pause-btn";
-    pauseBtn.id = "pause-btn";
-    pauseBtn.textContent = "⏸️";
-    pauseBtn.title = "Pausar o jogo (Esc ou P)";
-    pauseBtn.setAttribute("aria-label", "Pausar jogo");
-    pauseBtn.addEventListener("click", function (e) {
-      e.stopPropagation();
-      e.preventDefault();
-      togglePauseGame();
-    });
-    statsTopRow.appendChild(pauseBtn);
-    pauseBtnEl = pauseBtn;
-
-    statsCompactContainer.appendChild(statsTopRow);
-
-    // Barra Permanente de Equipamentos: 3 Módulos + 4 Passivos
-    var equipmentSlotsBar = document.createElement("div");
-    equipmentSlotsBar.className = "equipment-slots-bar";
-    equipmentSlotsBar.id = "equipment-slots-bar";
-    equipmentSlotsBar.innerHTML =
-      '<div class="slots-section slots-section-modules" title="Módulos Equipados (3 slots)">' +
-        '<span class="slots-header-tag mod-tag">MOD</span>' +
-        '<div class="slot-box slot-module empty" id="mod-slot-0"></div>' +
-        '<div class="slot-box slot-module empty" id="mod-slot-1"></div>' +
-        '<div class="slot-box slot-module empty" id="mod-slot-2"></div>' +
-      '</div>' +
-      '<div class="slots-divider"></div>' +
-      '<div class="slots-section slots-section-passives" title="Passivos Equipados (4 slots)">' +
-        '<span class="slots-header-tag pas-tag">PAS</span>' +
-        '<div class="slot-box slot-passive empty" id="pas-slot-0"></div>' +
-        '<div class="slot-box slot-passive empty" id="pas-slot-1"></div>' +
-        '<div class="slot-box slot-passive empty" id="pas-slot-2"></div>' +
-        '<div class="slot-box slot-passive empty" id="pas-slot-3"></div>' +
-      '</div>';
-    statsCompactContainer.appendChild(equipmentSlotsBar);
-
-    mainRow.appendChild(statsCompactContainer);
-    topBar.appendChild(mainRow);
-
-    // Sub-linha: Armas e Minas (abaixo dos anéis, alinhado à esquerda)
-    var subRow = document.createElement("div");
-    subRow.className = "top-bar-sub-row";
-
-    var weaponsContainer = document.createElement("div");
-    weaponsContainer.className = "weapons-hud-container";
-    weaponsContainer.id = "weapons-hud-container";
-
-    var weaponPill = document.createElement("div");
-    weaponPill.className = "weapon-pill";
-    weaponPill.id = "weapon-hud-pill";
-    weaponPill.innerHTML =
-      '<span class="weapon-icon" id="weapon-icon">🔫</span>' +
-      '<span class="weapon-name" id="weapon-name">Pistola</span>' +
-      '<span class="weapon-ammo-badge infinite" id="weapon-ammo">∞</span>';
-    weaponsContainer.appendChild(weaponPill);
-
-    var devicePill = document.createElement("div");
-    devicePill.className = "device-pill";
-    devicePill.id = "device-hud-pill";
-    devicePill.innerHTML =
-      '<span class="device-icon">💣</span>' +
-      '<span class="device-count" id="device-count">0</span>';
-    weaponsContainer.appendChild(devicePill);
-
-    subRow.appendChild(weaponsContainer);
-    topBar.appendChild(subRow);
-  }
-
-  // Captura referências aos elementos criados
+  // 1. Elementos da Barra Superior (Top Bar)
   hpRingContainer = document.getElementById("hp-ring-container");
   hpRingProgress = document.getElementById("hp-ring-progress");
   staminaRingContainer = document.getElementById("stamina-ring-container");
   staminaRingProgress = document.getElementById("stamina-ring-progress");
 
+  xpBarContainerEl = document.getElementById("xp-bar-container");
+  xpBarFillEl = document.getElementById("xp-bar-fill");
+  levelToastEl = document.getElementById("level-toast");
+
   compactPillEl = document.getElementById("compact-stats-pill");
-  pillWaveEl = document.getElementById("pill-wave");
-  pillKillsEl = document.getElementById("pill-kills");
-  pillLevelEl = document.getElementById("pill-level");
-  pillXpEl = document.getElementById("pill-xp");
+  waveProgressTextEl = document.getElementById("pill-wave-progress");
   biomeDisplayEl = document.getElementById("biome-display");
+  biomeIconEl = document.getElementById("biome-icon");
+  biomeNameEl = document.getElementById("biome-name");
+
   fpsCounterEl = document.getElementById("fps-counter");
   audioMuteBtnEl = document.getElementById("audio-mute-btn");
+  if (audioMuteBtnEl && !audioMuteBtnEl.dataset.bound) {
+    audioMuteBtnEl.dataset.bound = "true";
+    audioMuteBtnEl.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var nowMuted = toggleMute();
+      updateMuteButtonUI(nowMuted);
+    });
+  }
+
+  pauseBtnEl = document.getElementById("pause-btn");
+  if (pauseBtnEl && !pauseBtnEl.dataset.bound) {
+    pauseBtnEl.dataset.bound = "true";
+    pauseBtnEl.addEventListener("click", function (e) {
+      e.stopPropagation();
+      e.preventDefault();
+      togglePauseGame();
+    });
+  }
 
   weaponPillEl = document.getElementById("weapon-hud-pill");
   weaponIconEl = document.getElementById("weapon-icon");
   weaponNameEl = document.getElementById("weapon-name");
   weaponAmmoEl = document.getElementById("weapon-ammo");
-  devicePillEl = document.getElementById("device-hud-pill");
-  deviceCountEl = document.getElementById("device-count");
 
-  var uiOverlay = document.getElementById("ui-overlay");
-  weaponToastEl = document.getElementById("weapon-toast");
-  if (!weaponToastEl && uiOverlay) {
-    weaponToastEl = document.createElement("div");
-    weaponToastEl.id = "weapon-toast";
-    uiOverlay.appendChild(weaponToastEl);
-  }
-
-  lowHpVignetteEl = document.getElementById("low-hp-vignette");
-  damageFlashEl = document.getElementById("damage-flash");
-  levelFlashEl = document.getElementById("level-flash");
+  // 2. Elementos fora de fluxo (Overlay Absolutos)
   bossHudEl = document.getElementById("boss-hud");
   bossHpValEl = document.getElementById("boss-hp-val");
   bossHpFillEl = document.getElementById("boss-hp-fill");
+  frenzyPillEl = document.getElementById("frenzy-pill");
+  frenzyTimerValEl = document.getElementById("frenzy-timer-val");
+  weaponToastEl = document.getElementById("weapon-toast");
   bigAnnouncerEl = document.getElementById("big-announcer");
   bigWaveTitleEl = document.getElementById("big-wave-title");
   bigWaveSubEl = document.getElementById("big-wave-sub");
-  frenzyPillEl = document.getElementById("frenzy-pill");
-  frenzyTimerValEl = document.getElementById("frenzy-timer-val");
+  var droneIndicator = document.getElementById("drone-indicator");
+
+  // 3. Efeitos visuais de tela
+  lowHpVignetteEl = document.getElementById("low-hp-vignette");
+  damageFlashEl = document.getElementById("damage-flash");
+  levelFlashEl = document.getElementById("level-flash");
+
+  // 4. Botões de Dispositivos na Barra Inferior
+  var turretBtn = document.getElementById("btn-turret");
+  if (turretBtn && !turretBtn.dataset.boundHud) {
+    turretBtn.dataset.boundHud = "true";
+    turretBtn.addEventListener("pointerdown", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      deployTurret();
+    });
+  }
+
+  var mineBtn = document.getElementById("btn-mine");
+  if (mineBtn && !mineBtn.dataset.boundHud) {
+    mineBtn.dataset.boundHud = "true";
+    mineBtn.addEventListener("pointerdown", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      deployMine();
+    });
+  }
+
+  var bombBtn = document.getElementById("btn-bomb");
+  if (bombBtn && !bombBtn.dataset.boundHud) {
+    bombBtn.dataset.boundHud = "true";
+    bombBtn.addEventListener("pointerdown", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (state.combat && state.combat.triggerBomb) {
+        state.combat.triggerBomb();
+      }
+    });
+  }
+
+  // 5. Modal de Level Up
   levelupModal = document.getElementById("levelup-modal");
   upgradeCardsGrid = document.getElementById("upgrade-cards-grid");
 
-  // Customização do Game Over Modal para suportar exibição de fragmentos e retorno ao menu
+  // 6. Modal de Game Over
   gameoverModal = document.getElementById("gameover-modal");
   finalKillsEl = document.getElementById("final-kills");
   finalWavesEl = document.getElementById("final-waves");
   finalLevelEl = document.getElementById("final-level");
   finalTimeEl = document.getElementById("final-time");
+  gameoverFragBlockEl = document.getElementById("gameover-frag-block");
 
-  if (gameoverModal) {
-    var goCard = gameoverModal.querySelector(".gameover-card");
-    if (goCard) {
-      gameoverFragBlockEl = document.getElementById("gameover-frag-block");
-      if (!gameoverFragBlockEl) {
-        gameoverFragBlockEl = document.createElement("div");
-        gameoverFragBlockEl.id = "gameover-frag-block";
-        var statsEl = goCard.querySelector(".gameover-stats");
-        if (statsEl) {
-          goCard.insertBefore(gameoverFragBlockEl, statsEl.nextSibling);
-        } else {
-          goCard.appendChild(gameoverFragBlockEl);
-        }
-      }
-
-      // Adiciona botão "HABILIDADES & MENU" ao lado do botão de reiniciar
-      var actionsRow = goCard.querySelector(".gameover-actions-row");
-      if (!actionsRow) {
-        actionsRow = document.createElement("div");
-        actionsRow.className = "gameover-actions-row";
-
-        var oldBtn = goCard.querySelector("#restart-btn");
-        if (oldBtn) oldBtn.remove();
-
-        actionsRow.innerHTML =
-          '<button class="gameover-restart-btn" id="restart-btn">JOGAR NOVAMENTE</button>' +
-          '<button class="gameover-menu-btn" id="gameover-menu-btn">HABILIDADES & MENU</button>';
-        goCard.appendChild(actionsRow);
-
-        var newRestartBtn = actionsRow.querySelector("#restart-btn");
-        newRestartBtn.addEventListener("click", function (e) {
-          if (e) { e.preventDefault(); e.stopPropagation(); }
-          hideGameOverModal();
-          if (state.resetGame) {
-            state.resetGame();
-          } else if (state.progression && state.progression.restartGame) {
-            state.progression.restartGame();
-          }
-        });
-
-        var menuBtn = actionsRow.querySelector("#gameover-menu-btn");
-        menuBtn.addEventListener("click", function (e) {
-          if (e) { e.preventDefault(); e.stopPropagation(); }
-          hideGameOverModal();
-          showStartScreen(true);
-        });
-      }
-    }
-  }
-
-  // CRIAÇÃO DA TELA DE INÍCIO (START SCREEN)
-  startScreenModal = document.getElementById("start-screen-modal");
-  if (!startScreenModal) {
-    startScreenModal = document.createElement("div");
-    startScreenModal.id = "start-screen-modal";
-    startScreenModal.className = "start-screen-overlay";
-    startScreenModal.innerHTML =
-      '<div class="start-screen-card">' +
-        '<div class="start-logo-badge">LITTLE PLANET 3D</div>' +
-        '<h1 class="start-title">APOCALIPSE ZUMBI</h1>' +
-        '<p class="start-subtitle">Sobreviva às hordas e expanda seu arsenal no relevo dinâmico do planeta.</p>' +
-        '<div class="start-fragments-pill">' +
-          '<span class="start-frag-icon">💎</span>' +
-          '<span class="start-frag-count" id="start-frag-count">' + getFragments() + '</span>' +
-          '<span class="start-frag-text">Fragmentos Disponíveis</span>' +
-        '</div>' +
-        '<div class="start-actions-group">' +
-          '<button class="start-play-btn" id="start-play-btn">JOGAR</button>' +
-          '<button class="start-skills-btn" id="start-skills-btn">⚡ HABILIDADES</button>' +
-        '</div>' +
-        '<div class="start-audio-note">' +
-          '<span>🔊 Efeitos sonoros gerados via Web Audio API pura</span>' +
-        '</div>' +
-      '</div>';
-    document.body.appendChild(startScreenModal);
-
-    startPlayBtn = startScreenModal.querySelector("#start-play-btn");
-    startSkillsBtn = startScreenModal.querySelector("#start-skills-btn");
-    startFragValEl = startScreenModal.querySelector("#start-frag-count");
-
-    startPlayBtn.addEventListener("click", function (e) {
+  var restartBtn = document.getElementById("restart-btn");
+  if (restartBtn && !restartBtn.dataset.bound) {
+    restartBtn.dataset.bound = "true";
+    restartBtn.addEventListener("click", function (e) {
       if (e) { e.preventDefault(); e.stopPropagation(); }
-      hideStartScreen();
-      if (state.onUserStartGame) {
-        state.onUserStartGame();
-      } else if (state.resetGame) {
-        state.resetGame();
-      }
-    });
-
-    startSkillsBtn.addEventListener("click", function () {
-      showSkillTreeModal();
-    });
-  }
-
-  // CRIAÇÃO DO MODAL DA ÁRVORE DE HABILIDADES PERMANENTE
-  skillsTreeModal = document.getElementById("skills-tree-modal");
-  if (!skillsTreeModal) {
-    skillsTreeModal = document.createElement("div");
-    skillsTreeModal.id = "skills-tree-modal";
-    skillsTreeModal.className = "skills-tree-overlay";
-    skillsTreeModal.innerHTML =
-      '<div class="skills-tree-modal-card">' +
-        '<button class="skills-tree-close-btn" id="skills-tree-close-btn" title="Voltar">✕</button>' +
-        '<div class="skills-tree-scroll-container" id="skills-tree-scroll-container"></div>' +
-      '</div>';
-    document.body.appendChild(skillsTreeModal);
-
-    skillsTreeContent = skillsTreeModal.querySelector("#skills-tree-scroll-container");
-    skillsTreeCloseBtn = skillsTreeModal.querySelector("#skills-tree-close-btn");
-
-    skillsTreeCloseBtn.addEventListener("click", function () {
-      hideSkillTreeModal();
-      if (startFragValEl) startFragValEl.textContent = getFragments();
-    });
-  }
-
-  // CRIAÇÃO DO MODAL DE MENU DE PAUSA (PAUSE OVERLAY)
-  pauseModal = document.getElementById("pause-modal");
-  if (!pauseModal) {
-    pauseModal = document.createElement("div");
-    pauseModal.id = "pause-modal";
-    pauseModal.className = "pause-overlay";
-    pauseModal.innerHTML =
-      '<div class="pause-card">' +
-        '<div class="pause-badge">MODO DE PAUSA</div>' +
-        '<h2 class="pause-title">Pausado</h2>' +
-        '<p class="pause-subtitle">Partida suspensa. Consulte seu progresso ou escolha uma ação.</p>' +
-        '<div class="pause-stats-grid">' +
-          '<div class="pause-stat-box span-2">' +
-            '<span class="pause-stat-label">Onda Atual</span>' +
-            '<span class="pause-stat-val cyan" id="pause-stat-wave">1</span>' +
-          '</div>' +
-          '<div class="pause-stat-box span-2">' +
-            '<span class="pause-stat-label">Nível</span>' +
-            '<span class="pause-stat-val" id="pause-stat-level">Nv. 1</span>' +
-          '</div>' +
-          '<div class="pause-stat-box span-2">' +
-            '<span class="pause-stat-label">Total de Abates</span>' +
-            '<span class="pause-stat-val" id="pause-stat-kills">0 💀</span>' +
-          '</div>' +
-          '<div class="pause-stat-box span-3">' +
-            '<span class="pause-stat-label">Tempo de Sobrevivência</span>' +
-            '<span class="pause-stat-val" id="pause-stat-time">00:00</span>' +
-          '</div>' +
-          '<div class="pause-stat-box span-3">' +
-            '<span class="pause-stat-label">Fragmentos Acumulados</span>' +
-            '<span class="pause-stat-val gold" id="pause-stat-frags">+0 🔷</span>' +
-          '</div>' +
-        '</div>' +
-        '<div class="pause-actions-col">' +
-          '<button class="pause-action-btn pause-resume-btn" id="btn-pause-resume" title="Continuar partida">' +
-            '<span class="btn-icon">▶️</span>' +
-            '<span class="btn-text">Continuar</span>' +
-          '</button>' +
-          '<button class="pause-action-btn pause-restart-btn" id="btn-pause-restart" title="Reiniciar partida">' +
-            '<span class="btn-icon">🔄</span>' +
-            '<span class="btn-text">Reiniciar Partida</span>' +
-          '</button>' +
-          '<button class="pause-action-btn pause-skills-btn" id="btn-pause-skills" title="Ver árvore de habilidades">' +
-            '<span class="btn-icon">🌳</span>' +
-            '<span class="btn-text">Ver Habilidades</span>' +
-          '</button>' +
-          '<button class="pause-action-btn pause-menu-btn" id="btn-pause-menu" title="Voltar à tela inicial">' +
-            '<span class="btn-icon">🏠</span>' +
-            '<span class="btn-text">Voltar ao Início</span>' +
-          '</button>' +
-        '</div>' +
-        '<div class="pause-hotkey-footer">' +
-          'Pressione <kbd>ESC</kbd> ou <kbd>P</kbd> para alternar a pausa' +
-        '</div>' +
-      '</div>';
-    document.body.appendChild(pauseModal);
-  }
-
-  pauseTimeValEl = pauseModal.querySelector("#pause-stat-time");
-  pauseWaveValEl = pauseModal.querySelector("#pause-stat-wave");
-  pauseKillsValEl = pauseModal.querySelector("#pause-stat-kills");
-  pauseLevelValEl = pauseModal.querySelector("#pause-stat-level");
-  pauseFragsValEl = pauseModal.querySelector("#pause-stat-frags");
-
-  var btnResume = pauseModal.querySelector("#btn-pause-resume");
-  if (btnResume) {
-    btnResume.addEventListener("click", function (e) {
-      if (e) { e.preventDefault(); e.stopPropagation(); }
-      hidePauseModal();
-    });
-  }
-
-  var btnRestart = pauseModal.querySelector("#btn-pause-restart");
-  if (btnRestart) {
-    btnRestart.addEventListener("click", function (e) {
-      if (e) { e.preventDefault(); e.stopPropagation(); }
-      hidePauseModal();
+      hideGameOverModal();
       if (state.resetGame) {
         state.resetGame();
       } else if (state.progression && state.progression.restartGame) {
@@ -1147,25 +1156,112 @@ export function initHUD() {
     });
   }
 
-  var btnSkills = pauseModal.querySelector("#btn-pause-skills");
-  if (btnSkills) {
-    btnSkills.addEventListener("click", function (e) {
+  var menuBtn = document.getElementById("gameover-menu-btn");
+  if (menuBtn && !menuBtn.dataset.bound) {
+    menuBtn.dataset.bound = "true";
+    menuBtn.addEventListener("click", function (e) {
       if (e) { e.preventDefault(); e.stopPropagation(); }
-      showSkillTreeModal();
+      hideGameOverModal();
+      showStartScreen(true);
     });
   }
 
-  var btnMenu = pauseModal.querySelector("#btn-pause-menu");
-  if (btnMenu) {
-    btnMenu.addEventListener("click", function (e) {
-      if (e) { e.preventDefault(); e.stopPropagation(); }
-      hidePauseModal();
-      state.gameStarted = false;
-      if (state.sounds && state.sounds.stopMusic) {
-        state.sounds.stopMusic();
-      }
-      showStartScreen(true);
-    });
+  // 7. Modal de Início (Start Screen)
+  startScreenModal = document.getElementById("start-screen-modal");
+  if (startScreenModal) {
+    startPlayBtn = startScreenModal.querySelector("#start-play-btn");
+    startSkillsBtn = startScreenModal.querySelector("#start-skills-btn");
+    startFragValEl = startScreenModal.querySelector("#start-frag-count");
+
+    if (startPlayBtn && !startPlayBtn.dataset.bound) {
+      startPlayBtn.dataset.bound = "true";
+      startPlayBtn.addEventListener("click", function (e) {
+        if (e) { e.preventDefault(); e.stopPropagation(); }
+        hideStartScreen();
+        if (state.onUserStartGame) {
+          state.onUserStartGame();
+        } else if (state.resetGame) {
+          state.resetGame();
+        }
+      });
+    }
+
+    if (startSkillsBtn && !startSkillsBtn.dataset.bound) {
+      startSkillsBtn.dataset.bound = "true";
+      startSkillsBtn.addEventListener("click", function () {
+        showSkillTreeModal();
+      });
+    }
+  }
+
+  // 8. Modal da Árvore de Habilidades
+  skillsTreeModal = document.getElementById("skills-tree-modal");
+  if (skillsTreeModal) {
+    skillsTreeContent = skillsTreeModal.querySelector("#skills-tree-scroll-container");
+    skillsTreeCloseBtn = skillsTreeModal.querySelector("#skills-tree-close-btn");
+
+    if (skillsTreeCloseBtn && !skillsTreeCloseBtn.dataset.bound) {
+      skillsTreeCloseBtn.dataset.bound = "true";
+      skillsTreeCloseBtn.addEventListener("click", function () {
+        hideSkillTreeModal();
+      });
+    }
+  }
+
+  // 9. Modal de Pausa
+  pauseModal = document.getElementById("pause-modal");
+  if (pauseModal) {
+    pauseTimeValEl = pauseModal.querySelector("#pause-stat-time");
+    pauseWaveValEl = pauseModal.querySelector("#pause-stat-wave");
+    pauseKillsValEl = pauseModal.querySelector("#pause-stat-kills");
+    pauseLevelValEl = pauseModal.querySelector("#pause-stat-level");
+    pauseFragsValEl = pauseModal.querySelector("#pause-stat-frags");
+
+    var btnResume = pauseModal.querySelector("#btn-pause-resume");
+    if (btnResume && !btnResume.dataset.bound) {
+      btnResume.dataset.bound = "true";
+      btnResume.addEventListener("click", function (e) {
+        if (e) { e.preventDefault(); e.stopPropagation(); }
+        hidePauseModal();
+      });
+    }
+
+    var btnRestart = pauseModal.querySelector("#btn-pause-restart");
+    if (btnRestart && !btnRestart.dataset.bound) {
+      btnRestart.dataset.bound = "true";
+      btnRestart.addEventListener("click", function (e) {
+        if (e) { e.preventDefault(); e.stopPropagation(); }
+        hidePauseModal();
+        if (state.resetGame) {
+          state.resetGame();
+        } else if (state.progression && state.progression.restartGame) {
+          state.progression.restartGame();
+        }
+      });
+    }
+
+    var btnSkills = pauseModal.querySelector("#btn-pause-skills");
+    if (btnSkills && !btnSkills.dataset.bound) {
+      btnSkills.dataset.bound = "true";
+      btnSkills.addEventListener("click", function (e) {
+        if (e) { e.preventDefault(); e.stopPropagation(); }
+        showSkillTreeModal();
+      });
+    }
+
+    var btnMenu = pauseModal.querySelector("#btn-pause-menu");
+    if (btnMenu && !btnMenu.dataset.bound) {
+      btnMenu.dataset.bound = "true";
+      btnMenu.addEventListener("click", function (e) {
+        if (e) { e.preventDefault(); e.stopPropagation(); }
+        hidePauseModal();
+        state.gameStarted = false;
+        if (state.sounds && state.sounds.stopMusic) {
+          state.sounds.stopMusic();
+        }
+        showStartScreen(true);
+      });
+    }
   }
 
   // Registra métodos de UI no state global
@@ -1188,6 +1284,7 @@ export function initHUD() {
   state.ui.hideGameOverModal = hideGameOverModal;
   state.ui.updateWeaponUI = updateWeaponUI;
   state.ui.showWeaponNotification = showWeaponNotification;
+  state.ui.showItemNotification = showItemNotification;
   state.ui.updateMuteButtonUI = updateMuteButtonUI;
   state.ui.showStartScreen = showStartScreen;
   state.ui.hideStartScreen = hideStartScreen;
@@ -1197,15 +1294,22 @@ export function initHUD() {
   state.ui.showSkillTreeModal = showSkillTreeModal;
   state.ui.hideSkillTreeModal = hideSkillTreeModal;
   state.ui.updateBombsUI = updateBombsUI;
+  state.ui.updateDevicesUI = updateDevicesUI;
+  state.ui.updateMinesUI = updateDevicesUI;
+  state.ui.deployMine = deployMine;
+  state.ui.deployTurret = deployTurret;
   state.ui.updateDroneIndicatorUI = updateDroneIndicatorUI;
   state.ui.showDroneSelectionModal = showDroneSelectionModal;
   state.ui.updateBiomeUI = updateBiomeUI;
   state.ui.updateEquipmentSlotsUI = updateEquipmentSlotsUI;
 
+  // Atualização inicial
   updateHpUI();
   updateStaminaUI();
-  updateCompactPill();
+  updateXpUI();
+  updateWaveProgressUI();
   updateWeaponUI();
+  updateDevicesUI();
   updateBombsUI();
   updateDroneIndicatorUI();
   updateEquipmentSlotsUI();
@@ -1213,7 +1317,7 @@ export function initHUD() {
 }
 
 // ==========================================
-// 11. ATUALIZAÇÃO CONTÍNUA DO HUD
+// 17. ATUALIZAÇÃO CONTÍNUA DO HUD
 // ==========================================
 export function updateHUD(dt) {
   updateStaminaUI();
@@ -1256,19 +1360,3 @@ export function updateHUD(dt) {
   state.currentLookTarget.lerp(state.desiredLookTarget, CAM_LERP_FACTOR);
   state.camera.lookAt(state.currentLookTarget);
 }
-
-// ==========================================
-// 12. ATUALIZAÇÃO DO BIOMA NO HUD
-// ==========================================
-export function updateBiomeUI(icon, name, color) {
-  if (!biomeDisplayEl) {
-    biomeDisplayEl = document.getElementById("biome-display");
-  }
-  if (biomeDisplayEl) {
-    biomeDisplayEl.textContent = (icon ? icon + " " : "") + (name || "");
-    if (color) {
-      biomeDisplayEl.style.color = color;
-    }
-  }
-}
-

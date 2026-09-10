@@ -487,8 +487,8 @@ export const ZOMBIE_SPEED_GROWTH_PER_WAVE = 0.025;
 export const ZOMBIE_SPEED_MAX_MULTIPLIER = 1.60;
 export const ZOMBIE_TERRAIN_LERP_FACTOR = 0.25;
 
-export const ZOMBIE_MODEL_ROTATION_Y_OFFSET = Math.PI;
-export const ZOMBIE_ROTATION_SLERP_FACTOR = 0.20;
+export const ZOMBIE_MODEL_ROTATION_Y_OFFSET = 0;
+export const ZOMBIE_ROTATION_SLERP_FACTOR = 0.45;
 
 export const ZOMBIE_WALK_CONFIG = {
   legAmplitude: 0.50,
@@ -858,7 +858,31 @@ export const CHEST_RESPAWN_INTERVAL = 20.0;
 export const MAX_SIMULTANEOUS_CHESTS = 12;
 export const INITIAL_CHESTS_COUNT = 6;
 export const CHEST_COLLECT_RADIUS = 0.045;
+
+// Duração e ciclo de vida dos baús de drop
+export const DROP_CHEST_LIFETIME = 40.0;
+export const DROP_CHEST_BLINK_START = 30.0;
+
+// Parâmetros visuais e iluminação dos baús fixos (permanentes por região)
+export const FIXED_CHEST_SCALE = 1.35;
+export const FIXED_CHEST_LIGHT_INTENSITY = 3.5;
+export const FIXED_CHEST_LIGHT_DISTANCE = 7.5;
+export const FIXED_CHEST_LIGHT_COLOR = 0xffe066;
+
+// Pesos de categorias: Baús fixos têm peso muito maior para dispositivos (drone e turret)
+// Baús de drop favorecem armas e minas
 export const CHEST_TYPES_WEIGHTS = {
+  drop: {
+    weapon: 0.48,
+    device: 0.32,
+    consumable: 0.20
+  },
+  fixed: {
+    weapon: 0.20,
+    device: 0.70,
+    consumable: 0.10
+  },
+  // Retrocompatibilidade
   weapon: 0.40,
   device: 0.35,
   consumable: 0.25
@@ -885,7 +909,8 @@ export const DRONE_TYPES = {
     desc: "Cadência ultra-rápida (0.28s) e disparos precisos de energia contínua.",
     damage: 2,
     fireRate: 0.28,
-    range: 0.45,
+    range: 0.16,
+    baseRange: 0.16,
     bodyColor: 0x1e293b,
     eyeColor: 0x06b6d4,
     gunColor: 0x0284c7,
@@ -898,7 +923,8 @@ export const DRONE_TYPES = {
     desc: "Canhão pesado (7 dano) com impacto de choque e dano explosivo em área.",
     damage: 7,
     fireRate: 1.10,
-    range: 0.42,
+    range: 0.14,
+    baseRange: 0.14,
     bodyColor: 0x27272a,
     eyeColor: 0xf97316,
     gunColor: 0xd97706,
@@ -913,7 +939,8 @@ export const DRONE_TYPES = {
     desc: "Disparos táticos marcadores: 50% de lentidão e +30% de dano sofrido pelo alvo.",
     damage: 2,
     fireRate: 0.55,
-    range: 0.50,
+    range: 0.20,
+    baseRange: 0.20,
     bodyColor: 0x14532d,
     eyeColor: 0x22c55e,
     gunColor: 0x15803d,
@@ -932,7 +959,47 @@ export const DRONE_ORBIT_RADIUS = 0.85;
 export const DRONE_HEIGHT = 1.10;
 export const DRONE_ORBIT_SPEED = 2.2;
 
+// Progressão de alcance do drone (+18% por nível do módulo drone e metade do efeito da passiva range)
+export const DRONE_RANGE_STEP_PER_LEVEL = 0.18;
+export const DRONE_RANGE_GROWTH_PER_LEVEL = 0.18;
+export const DRONE_RANGE_PASSIVE_EFFICIENCY = 0.50;
+export const DRONE_RANGE_PASSIVE_FACTOR = 0.50;
+
+/**
+ * Calcula o alcance efetivo do drone com escalonamento por nível do módulo drone (+18%/nível)
+ * e influência parcial da passiva de alcance (50% de eficiência).
+ */
+export function calculateDroneRange(droneTypeOrBaseRange, droneLevel = 0, rangePassiveLevel = 0) {
+  if (droneTypeOrBaseRange && typeof droneTypeOrBaseRange === "object") {
+    var s = droneTypeOrBaseRange;
+    var dType = s.droneType || "sentinela";
+    var dLvl = (s.upgrades && s.upgrades.drone) ? (s.upgrades.drone.level || s.upgrades.drone.rank || 0) : 0;
+    var pLvl = (s.upgrades && s.upgrades.range) ? (s.upgrades.range.level || s.upgrades.range.rank || 0) : 0;
+    return calculateDroneRange(dType, dLvl, pLvl);
+  }
+
+  var baseRange;
+  if (typeof droneTypeOrBaseRange === "number") {
+    baseRange = droneTypeOrBaseRange;
+  } else if (droneTypeOrBaseRange && DRONE_TYPES[droneTypeOrBaseRange]) {
+    baseRange = DRONE_TYPES[droneTypeOrBaseRange].range;
+  } else {
+    baseRange = DRONE_RANGE;
+  }
+
+  var dLvlNum = Math.max(0, Number(droneLevel) || 0);
+  var pLvlNum = Math.max(0, Number(rangePassiveLevel) || 0);
+
+  var moduleMult = 1.0 + dLvlNum * DRONE_RANGE_GROWTH_PER_LEVEL;
+  var passiveBonus = pLvlNum * (RANGE_UPGRADE_STEP * DRONE_RANGE_PASSIVE_FACTOR);
+
+  return (baseRange * moduleMult) + passiveBonus;
+}
+
+export const getDroneRange = calculateDroneRange;
+
 // Tabela de Drops de Baú por Bioma (arma, dispositivos e consumíveis temáticos)
+// Baús fixos têm peso muito maior para drone e turret; baús de drop favorecem armas e minas
 export const BIOME_CHEST_DROPS = {
   suburb: {
     id: "suburb",
@@ -943,14 +1010,38 @@ export const BIOME_CHEST_DROPS = {
       device: 0.25,
       consumable: 0.30
     },
+    fixedWeights: {
+      weapon: 0.20,
+      device: 0.70,
+      consumable: 0.10
+    },
+    dropWeights: {
+      weapon: 0.50,
+      device: 0.30,
+      consumable: 0.20
+    },
     weapons: [
       { id: "pistol_upgraded", weight: 0.35, name: "Pistola Aprimorada", ammoBonus: 0, damageBonus: 1 },
       { id: "shotgun", weight: 0.35, extraAmmoMult: 1.0 },
       { id: "smg", weight: 0.30, extraAmmoMult: 1.0 }
     ],
     devices: [
-      { type: "mines", count: 3, weight: 0.58 },
-      { type: "barrier", weight: 0.42 }
+      { type: "drone", weight: 0.30 },
+      { type: "turret", weight: 0.25 },
+      { type: "mines", count: 3, weight: 0.35 },
+      { type: "barrier", weight: 0.10 }
+    ],
+    devicesFixed: [
+      { type: "drone", weight: 0.50 },
+      { type: "turret", weight: 0.35 },
+      { type: "mines", count: 3, weight: 0.10 },
+      { type: "barrier", weight: 0.05 }
+    ],
+    devicesDrop: [
+      { type: "mines", count: 3, weight: 0.55 },
+      { type: "turret", weight: 0.18 },
+      { type: "drone", weight: 0.12 },
+      { type: "barrier", weight: 0.15 }
     ],
     consumables: [
       { type: "medkit", hp: 20, weight: 0.20 },
@@ -967,14 +1058,38 @@ export const BIOME_CHEST_DROPS = {
       device: 0.40,
       consumable: 0.20
     },
+    fixedWeights: {
+      weapon: 0.20,
+      device: 0.70,
+      consumable: 0.10
+    },
+    dropWeights: {
+      weapon: 0.45,
+      device: 0.35,
+      consumable: 0.20
+    },
     weapons: [
       { id: "shotgun", weight: 0.40, extraAmmoMult: 1.1 },
       { id: "blades", weight: 0.35, extraAmmoMult: 1.0 },
       { id: "rifle", weight: 0.25, extraAmmoMult: 1.0 }
     ],
     devices: [
-      { type: "mines", count: 4, weight: 0.58 },
-      { type: "barrier", weight: 0.42 }
+      { type: "drone", weight: 0.32 },
+      { type: "turret", weight: 0.25 },
+      { type: "mines", count: 3, weight: 0.33 },
+      { type: "barrier", weight: 0.10 }
+    ],
+    devicesFixed: [
+      { type: "drone", weight: 0.48 },
+      { type: "turret", weight: 0.37 },
+      { type: "mines", count: 3, weight: 0.10 },
+      { type: "barrier", weight: 0.05 }
+    ],
+    devicesDrop: [
+      { type: "mines", count: 3, weight: 0.55 },
+      { type: "turret", weight: 0.18 },
+      { type: "drone", weight: 0.12 },
+      { type: "barrier", weight: 0.15 }
     ],
     consumables: [
       { type: "medkit", hp: 20, weight: 0.20 },
@@ -991,6 +1106,16 @@ export const BIOME_CHEST_DROPS = {
       device: 0.30,
       consumable: 0.15
     },
+    fixedWeights: {
+      weapon: 0.20,
+      device: 0.72,
+      consumable: 0.08
+    },
+    dropWeights: {
+      weapon: 0.55,
+      device: 0.30,
+      consumable: 0.15
+    },
     weapons: [
       { id: "flamethrower", weight: 0.40, extraAmmoMult: 1.1 },
       { id: "smg", weight: 0.35, extraAmmoMult: 1.1 },
@@ -998,8 +1123,19 @@ export const BIOME_CHEST_DROPS = {
     ],
     canSpawnMachinegun: true,
     devices: [
-      { type: "turret", weight: 0.62 },
-      { type: "mines", count: 3, weight: 0.38 }
+      { type: "turret", weight: 0.38 },
+      { type: "drone", weight: 0.32 },
+      { type: "mines", count: 3, weight: 0.30 }
+    ],
+    devicesFixed: [
+      { type: "turret", weight: 0.45 },
+      { type: "drone", weight: 0.45 },
+      { type: "mines", count: 3, weight: 0.10 }
+    ],
+    devicesDrop: [
+      { type: "mines", count: 3, weight: 0.55 },
+      { type: "turret", weight: 0.25 },
+      { type: "drone", weight: 0.20 }
     ],
     consumables: [
       { type: "bomb", count: 1, weight: 0.50 },
@@ -1010,10 +1146,20 @@ export const BIOME_CHEST_DROPS = {
   desert: {
     id: "desert",
     name: "Deserto de Cinzas",
-    chestWeight: 0.55, // Caixas mais raras porém de alto poder
+    chestWeight: 0.55,
     weights: {
-      weapon: 0.65,     // Alto foco em armas de longo alcance
+      weapon: 0.65,
       device: 0.20,
+      consumable: 0.15
+    },
+    fixedWeights: {
+      weapon: 0.25,
+      device: 0.65,
+      consumable: 0.10
+    },
+    dropWeights: {
+      weapon: 0.60,
+      device: 0.25,
       consumable: 0.15
     },
     weapons: [
@@ -1022,8 +1168,19 @@ export const BIOME_CHEST_DROPS = {
       { id: "grenadelauncher", weight: 0.25, extraAmmoMult: 1.3 }
     ],
     devices: [
-      { type: "turret", weight: 0.55 },
-      { type: "mines", count: 5, weight: 0.45 }
+      { type: "drone", weight: 0.35 },
+      { type: "turret", weight: 0.35 },
+      { type: "mines", count: 3, weight: 0.30 }
+    ],
+    devicesFixed: [
+      { type: "drone", weight: 0.50 },
+      { type: "turret", weight: 0.40 },
+      { type: "mines", count: 3, weight: 0.10 }
+    ],
+    devicesDrop: [
+      { type: "mines", count: 3, weight: 0.55 },
+      { type: "turret", weight: 0.25 },
+      { type: "drone", weight: 0.20 }
     ],
     consumables: [
       { type: "bomb", count: 1, weight: 0.50 },
@@ -1038,7 +1195,17 @@ export const BIOME_CHEST_DROPS = {
     weights: {
       weapon: 0.25,
       device: 0.35,
-      consumable: 0.40 // Foco em bombas, lâminas defensivas e consumíveis
+      consumable: 0.40
+    },
+    fixedWeights: {
+      weapon: 0.20,
+      device: 0.68,
+      consumable: 0.12
+    },
+    dropWeights: {
+      weapon: 0.35,
+      device: 0.35,
+      consumable: 0.30
     },
     weapons: [
       { id: "shotgun", weight: 0.35, extraAmmoMult: 1.0 },
@@ -1046,8 +1213,22 @@ export const BIOME_CHEST_DROPS = {
       { id: "blades", weight: 0.30, extraAmmoMult: 1.0 }
     ],
     devices: [
-      { type: "barrier", weight: 0.58 },
-      { type: "mines", count: 3, weight: 0.42 }
+      { type: "drone", weight: 0.30 },
+      { type: "turret", weight: 0.25 },
+      { type: "mines", count: 3, weight: 0.35 },
+      { type: "barrier", weight: 0.10 }
+    ],
+    devicesFixed: [
+      { type: "drone", weight: 0.45 },
+      { type: "turret", weight: 0.40 },
+      { type: "mines", count: 3, weight: 0.10 },
+      { type: "barrier", weight: 0.05 }
+    ],
+    devicesDrop: [
+      { type: "mines", count: 3, weight: 0.55 },
+      { type: "turret", weight: 0.18 },
+      { type: "drone", weight: 0.12 },
+      { type: "barrier", weight: 0.15 }
     ],
     consumables: [
       { type: "medkit", hp: 20, weight: 0.25 },
@@ -1058,10 +1239,20 @@ export const BIOME_CHEST_DROPS = {
   frozen: {
     id: "frozen",
     name: "Zona Gelada",
-    chestWeight: 0.60, // Caixas raras com munição extra
+    chestWeight: 0.60,
     weights: {
       weapon: 0.60,
       device: 0.25,
+      consumable: 0.15
+    },
+    fixedWeights: {
+      weapon: 0.20,
+      device: 0.70,
+      consumable: 0.10
+    },
+    dropWeights: {
+      weapon: 0.55,
+      device: 0.30,
       consumable: 0.15
     },
     weapons: [
@@ -1071,8 +1262,22 @@ export const BIOME_CHEST_DROPS = {
       { id: "blades", weight: 0.20, extraAmmoMult: 1.4 }
     ],
     devices: [
-      { type: "turret", weight: 0.55 },
-      { type: "barrier", weight: 0.45 }
+      { type: "drone", weight: 0.35 },
+      { type: "turret", weight: 0.35 },
+      { type: "mines", count: 3, weight: 0.20 },
+      { type: "barrier", weight: 0.10 }
+    ],
+    devicesFixed: [
+      { type: "drone", weight: 0.48 },
+      { type: "turret", weight: 0.42 },
+      { type: "mines", count: 3, weight: 0.05 },
+      { type: "barrier", weight: 0.05 }
+    ],
+    devicesDrop: [
+      { type: "mines", count: 3, weight: 0.55 },
+      { type: "turret", weight: 0.20 },
+      { type: "drone", weight: 0.15 },
+      { type: "barrier", weight: 0.10 }
     ],
     consumables: [
       { type: "bomb", count: 1, weight: 0.50 },
@@ -1083,13 +1288,16 @@ export const BIOME_CHEST_DROPS = {
 };
 
 // Dispositivos (Minas, Torreta, Barreira)
-export const MAX_MINES_CARRIED = 6;
+export const MAX_MINES_CARRIED = 12;
 export const INITIAL_MINES_COUNT = 3;
+export const MAX_TURRETS_CARRIED = 4;
+export const INITIAL_TURRETS_COUNT = 0;
 export const MINE_PLANT_STATIONARY_DELAY = 1.2;
 export const MINE_PLANT_ENEMY_DISTANCE_FACTOR = 0.50; // < metade do alcance de mira
 export const MINE_TRIGGER_RADIUS = 0.045;
 export const MINE_EXPLOSION_RADIUS = 0.14;
 export const MINE_DAMAGE = 18;
+export const MAX_ACTIVE_MINES = 8;
 
 export const MAX_ACTIVE_TURRETS = 2;
 export const TURRET_LIFETIME = 25.0;
@@ -1388,7 +1596,12 @@ export const MODULES_CONFIG = {
     max: 4,
     name: "Drone de Combate",
     icon: "🛸",
-    desc: "Ativa um drone de suporte orbital permanente com especialização tática"
+    desc: "Aprimoramentos de dano, cadência e escolta do drone permanente",
+    rangeGrowthPerLevel: 0.18,
+    rangeStepPerLevel: 0.18,
+    rangeBonusPerLevel: 0.18,
+    rangePassiveEfficiency: 0.5,
+    rangePassiveFactor: 0.5
   },
   blades: {
     category: "module",
@@ -1404,7 +1617,7 @@ export const MODULES_CONFIG = {
     max: 4,
     name: "Minas Terrestres",
     icon: "💣",
-    desc: "Planta automaticamente minas explosivas no solo ao desacelerar"
+    desc: "Concede minas explosivas ao inventário para armar o solo contra hordas"
   },
   turret: {
     category: "module",
@@ -1412,7 +1625,7 @@ export const MODULES_CONFIG = {
     max: 4,
     name: "Torreta Automática",
     icon: "📡",
-    desc: "Instala sentinela de suporte autônoma que dispara contra zumbis próximos"
+    desc: "Concede torretas sentinelas ao inventário para posicionamento estratégico"
   },
   machinegun: {
     category: "module",

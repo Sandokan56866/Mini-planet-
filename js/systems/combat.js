@@ -23,6 +23,7 @@ import {
   DRONE_BASE_DAMAGE,
   DRONE_BASE_FIRE_RATE,
   DRONE_RANGE,
+  calculateDroneRange,
   DRONE_ORBIT_RADIUS,
   DRONE_HEIGHT,
   DRONE_ORBIT_SPEED,
@@ -1266,7 +1267,10 @@ export function updateCombat(dt) {
     var droneFireRate = dTypeCfg.fireRate / (1.0 + (state.upgrades.droneCadence?.level || 0) * 0.25);
 
     var nearestZ = null;
-    var nearestZDist = dTypeCfg.range;
+    var droneEffectiveRange = typeof calculateDroneRange === "function"
+      ? calculateDroneRange(curDroneType, (state.upgrades && state.upgrades.drone) ? (state.upgrades.drone.level || 0) : 0, (state.upgrades && state.upgrades.range) ? (state.upgrades.range.level || 0) : 0)
+      : dTypeCfg.range;
+    var nearestZDist = droneEffectiveRange;
     for (var dzi = 0; dzi < state.zombiePool.length; dzi++) {
       var dz = state.zombiePool[dzi];
       if (!dz.active || dz.state !== "walk" || dz.hp <= 0) continue;

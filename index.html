@@ -15,67 +15,87 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   </head>
   <body>
+    <!-- 3D WebGL Canvas e Efeitos de Fundo -->
     <canvas id="webgl-canvas"></canvas>
     <div class="space-starfield"></div>
+
+    <!-- Efeitos de Tela / Flash / Vinheta -->
     <div id="damage-flash"></div>
     <div id="low-hp-vignette"></div>
     <div id="level-flash"></div>
+    <div id="white-flash" class="white-flash"></div>
     <div id="damage-container"></div>
-    <!-- RETÍCULA VISUAL EM X SOBRE O ALVO MARCADO -->
-    <div id="target-crosshair"></div>
+    <div id="chest-indicators-container" class="chest-indicators-container"></div>
 
-    <!-- UI OVERLAY -->
+    <!-- UI OVERLAY (Flex Column, Space-Between) -->
     <div id="ui-overlay">
-      <!-- Top Bar -->
+      <!-- 1. TOP BAR (Em fluxo: Linha Principal + Linha Secundária) -->
       <div class="top-bar">
-        <!-- Health Card -->
-        <div class="health-card">
-          <div class="health-header">
-            <span class="health-title">❤️ Vida</span>
-            <span class="health-val" id="hp-val">100 / 100</span>
+        <!-- Linha Principal: Anéis, Pílula Central e Controles -->
+        <div class="top-bar-main-row">
+          <!-- Esquerda: Anéis de Vida e Estamina -->
+          <div class="rings-group" id="rings-group">
+            <div class="ring-container ring-hp" id="hp-ring-container" title="Pontos de Vida">
+              <svg class="ring-svg" viewBox="0 0 40 40">
+                <circle class="ring-bg" cx="20" cy="20" r="16"></circle>
+                <circle class="ring-progress ring-progress-hp" id="hp-ring-progress" cx="20" cy="20" r="16"></circle>
+              </svg>
+              <div class="ring-icon ring-icon-hp">
+                <svg viewBox="0 0 24 24" width="16" height="16">
+                  <path fill="#ffffff" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+                </svg>
+              </div>
+            </div>
+
+            <div class="ring-container ring-stamina" id="stamina-ring-container" title="Estamina / Esquiva">
+              <svg class="ring-svg" viewBox="0 0 40 40">
+                <circle class="ring-bg" cx="20" cy="20" r="16"></circle>
+                <circle class="ring-progress ring-progress-stamina" id="stamina-ring-progress" cx="20" cy="20" r="16"></circle>
+              </svg>
+              <div class="ring-icon ring-icon-stamina">
+                <svg viewBox="0 0 24 24" width="16" height="16">
+                  <path fill="#ffffff" d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+                </svg>
+              </div>
+            </div>
           </div>
-          <div class="health-bar-track">
-            <div class="health-bar-fill" id="hp-fill"></div>
+
+          <!-- Centro: Pílula compacta de Onda e Abates + Ícone de Bioma -->
+          <div class="center-wave-pill" id="compact-stats-pill">
+            <span class="biome-chip" id="biome-display" title="Bioma Atual">
+              <span id="biome-icon">🏙️</span>
+              <span id="biome-name" class="biome-name">Subúrbio</span>
+            </span>
+            <span class="pill-dot">·</span>
+            <span class="wave-progress-text" id="pill-wave-progress">Onda 1 · 0/30</span>
+          </div>
+
+          <!-- Direita: FPS, Botão de Áudio e Botão de Pausa -->
+          <div class="top-right-group">
+            <div class="fps-tiny" id="fps-counter">60 FPS</div>
+            <button class="audio-mute-btn" id="audio-mute-btn" title="Alternar Áudio">🔊</button>
+            <button class="pause-btn" id="pause-btn" title="Pausar o jogo (Esc ou P)" aria-label="Pausar jogo">⏸️</button>
           </div>
         </div>
 
-        <!-- XP Card -->
-        <div class="xp-card">
-          <div class="xp-header">
-            <span class="xp-title">⭐ Nível <span id="level-val">1</span></span>
-            <span class="xp-val" id="xp-val">0 / 30 XP</span>
-          </div>
-          <div class="xp-bar-track">
-            <div class="xp-bar-fill" id="xp-fill"></div>
-          </div>
-        </div>
-
-        <!-- Stats Card (Wave, Kills Progress & Horário) -->
-        <div class="stats-card">
-          <div class="stat-col">
-            <span class="stat-label">Onda</span>
-            <span class="stat-val" id="wave-val">1</span>
-          </div>
-          <div class="stat-divider"></div>
-          <div class="stat-col">
-            <span class="stat-label">Meta</span>
-            <span class="stat-val" id="wave-progress-val" style="color: #67e8f9;">0 / 15</span>
-          </div>
-          <div class="stat-divider"></div>
-          <div class="stat-col">
-            <span class="stat-label">Ciclo</span>
-            <span class="stat-val" id="day-night-val" style="color: #f59e0b;">☀️ Dia</span>
+        <!-- Linha Secundária: Barra de XP (3px), Toast de Nível e Pílula de Arma -->
+        <div class="top-bar-sub-row">
+          <div class="sub-row-left">
+            <div class="xp-bar-container" id="xp-bar-container" title="Progresso de XP">
+              <div class="xp-bar-fill" id="xp-bar-fill"></div>
+            </div>
+            <div class="level-toast" id="level-toast">Nv. 1</div>
+            <div class="weapon-pill" id="weapon-hud-pill">
+              <span class="weapon-icon" id="weapon-icon">🔫</span>
+              <span class="weapon-name" id="weapon-name">Pistola</span>
+              <span class="weapon-ammo-badge infinite" id="weapon-ammo">∞</span>
+            </div>
           </div>
         </div>
       </div>
 
-      <!-- Active Frenzy Pill -->
-      <div id="frenzy-pill">
-        <span>🔥</span>
-        <span>Frenesi <strong id="frenzy-timer-val">8.0s</strong></span>
-      </div>
-
-      <!-- Boss Health HUD (Visible when Boss is spawned) -->
+      <!-- Elementos Fora do Fluxo (Position Absolute) -->
+      <!-- Boss Health HUD (top: 60px) -->
       <div id="boss-hud">
         <div class="boss-header">
           <span class="boss-title">⚠️ O BRUTO (CHEFE)</span>
@@ -86,13 +106,25 @@
         </div>
       </div>
 
+      <!-- Active Buff / Frenzy Pill (top: 112px, esquerda) -->
+      <div id="frenzy-pill">
+        <span>🔥</span>
+        <span>Frenesi <strong id="frenzy-timer-val">8.0s</strong></span>
+      </div>
+
+      <!-- Drone Companion Indicator (top: 112px, direita) -->
+      <div id="drone-indicator" class="drone-indicator"></div>
+
+      <!-- Weapon / Item Notification Banner (top: 158px, centro) -->
+      <div id="weapon-toast"></div>
+
       <!-- Big Wave Announcement in Center of Screen -->
       <div id="big-announcer">
         <div class="big-announcer-title" id="big-wave-title">ONDA 1</div>
         <div class="big-announcer-sub" id="big-wave-sub">SOBREVIVA POR 45 SEGUNDOS</div>
       </div>
 
-      <!-- Bottom Controls -->
+      <!-- 2. BOTTOM BAR (Em fluxo: Joystick à esquerda e Dispositivos à direita) -->
       <div class="bottom-bar">
         <!-- Virtual Joystick -->
         <div id="joystick-area">
@@ -100,35 +132,50 @@
           <div id="joystick-knob"></div>
         </div>
 
-        <!-- Right Side: Dash Button, Cam toggle & Hints -->
-        <div style="display: flex; flex-direction: column; align-items: flex-end;">
-          <!-- Dash Button with Circular SVG Cooldown -->
-          <div id="dash-btn-container" title="Esquiva rápida [Espaço / Shift]">
-            <svg id="dash-cooldown-svg" viewBox="0 0 76 76">
-              <circle id="dash-cooldown-circle" cx="38" cy="38" r="34"></circle>
-            </svg>
-            <div id="dash-btn">
-              <span class="dash-icon">⚡</span>
-              <span class="dash-label" id="dash-btn-label">DASH</span>
-            </div>
-          </div>
-
-          <button class="cam-btn" id="cam-zoom-btn" title="Alternar Zoom">🔍</button>
-          <div class="hint-pill">
-            🕹️ <strong>Mover:</strong> joystick ou WASD<br />
-            ⚡ <strong>Dash:</strong> botão ou Espaço<br />
-            🔫 <strong>Tiro:</strong> mira automática
-          </div>
+        <!-- Coluna de Botões de Ação: Mina, Torreta e Bomba -->
+        <div class="hud-devices-container" id="hud-devices-container">
+          <button class="hud-device-btn btn-mine" id="btn-mine" title="Plantar Mina [M]">
+            <span class="device-btn-icon">💥</span>
+            <span class="device-badge" id="mine-badge">0</span>
+          </button>
+          <button class="hud-device-btn btn-turret" id="btn-turret" title="Instalar Torreta [T]">
+            <span class="device-btn-icon">🛠️</span>
+            <span class="device-badge" id="turret-badge">0</span>
+          </button>
+          <button class="hud-device-btn btn-bomb" id="btn-bomb" title="Lançar Bomba de Área [B]">
+            <span class="device-btn-icon">💣</span>
+            <span class="device-badge" id="bomb-badge">2</span>
+          </button>
         </div>
       </div>
     </div>
 
+    <!-- Modais do Jogo -->
     <!-- Level Up Modal (3 selectable cards) -->
     <div id="levelup-modal">
       <div class="levelup-container">
         <div class="levelup-badge">⭐ Subiu de Nível!</div>
         <div class="levelup-title">Escolha uma Melhoria</div>
         <div class="levelup-sub">Fortaleça suas habilidades para enfrentar as hordas seguintes.</div>
+        <div class="modal-equipment-section" id="levelup-equipment-slots">
+          <div class="modal-slots-label">MÓDULOS E PASSIVOS EQUIPADOS</div>
+          <div class="equipment-slots-bar in-modal">
+            <div class="slots-section slots-section-modules" title="Módulos Equipados (3 slots)">
+              <span class="slots-header-tag mod-tag">MOD</span>
+              <div class="slot-box slot-module empty" data-slot="mod-0"></div>
+              <div class="slot-box slot-module empty" data-slot="mod-1"></div>
+              <div class="slot-box slot-module empty" data-slot="mod-2"></div>
+            </div>
+            <div class="slots-divider"></div>
+            <div class="slots-section slots-section-passives" title="Passivos Equipados (4 slots)">
+              <span class="slots-header-tag pas-tag">PAS</span>
+              <div class="slot-box slot-passive empty" data-slot="pas-0"></div>
+              <div class="slot-box slot-passive empty" data-slot="pas-1"></div>
+              <div class="slot-box slot-passive empty" data-slot="pas-2"></div>
+              <div class="slot-box slot-passive empty" data-slot="pas-3"></div>
+            </div>
+          </div>
+        </div>
         <div class="upgrade-cards-grid" id="upgrade-cards-grid">
           <!-- Dynamically populated 3 cards -->
         </div>
@@ -159,10 +206,115 @@
             <span class="gameover-stat-value" id="final-time">0s</span>
           </div>
         </div>
-        <button class="gameover-restart-btn" id="restart-btn">Recomeçar</button>
+        <div id="gameover-frag-block"></div>
+        <div class="gameover-actions-row">
+          <button class="gameover-restart-btn" id="restart-btn">JOGAR NOVAMENTE</button>
+          <button class="gameover-menu-btn" id="gameover-menu-btn">HABILIDADES & MENU</button>
+        </div>
       </div>
     </div>
 
+    <!-- Start Screen Modal -->
+    <div id="start-screen-modal" class="start-screen-overlay">
+      <div class="start-screen-card">
+        <div class="start-logo-badge">LITTLE PLANET 3D</div>
+        <h1 class="start-title">APOCALIPSE ZUMBI</h1>
+        <p class="start-subtitle">Sobreviva às hordas e expanda seu arsenal no relevo dinâmico do planeta.</p>
+        <div class="start-fragments-pill">
+          <span class="start-frag-icon">💎</span>
+          <span class="start-frag-count" id="start-frag-count">0</span>
+          <span class="start-frag-text">Fragmentos Disponíveis</span>
+        </div>
+        <div class="start-actions-group">
+          <button class="start-play-btn" id="start-play-btn">JOGAR</button>
+          <button class="start-skills-btn" id="start-skills-btn">⚡ HABILIDADES</button>
+        </div>
+        <div class="start-audio-note">
+          <span>🔊 Efeitos sonoros gerados via Web Audio API pura</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Skills Tree Modal -->
+    <div id="skills-tree-modal" class="skills-tree-overlay">
+      <div class="skills-tree-modal-card">
+        <button class="skills-tree-close-btn" id="skills-tree-close-btn" title="Voltar">✕</button>
+        <div class="skills-tree-scroll-container" id="skills-tree-scroll-container"></div>
+      </div>
+    </div>
+
+    <!-- Pause Modal -->
+    <div id="pause-modal" class="pause-overlay">
+      <div class="pause-card">
+        <div class="pause-badge">MODO DE PAUSA</div>
+        <h2 class="pause-title">Pausado</h2>
+        <p class="pause-subtitle">Partida suspensa. Consulte seu progresso ou escolha uma ação.</p>
+        <div class="pause-stats-grid">
+          <div class="pause-stat-box span-2">
+            <span class="pause-stat-label">Onda Atual</span>
+            <span class="pause-stat-val cyan" id="pause-stat-wave">1</span>
+          </div>
+          <div class="pause-stat-box span-2">
+            <span class="pause-stat-label">Nível</span>
+            <span class="pause-stat-val" id="pause-stat-level">Nv. 1</span>
+          </div>
+          <div class="pause-stat-box span-2">
+            <span class="pause-stat-label">Total de Abates</span>
+            <span class="pause-stat-val" id="pause-stat-kills">0 💀</span>
+          </div>
+          <div class="pause-stat-box span-3">
+            <span class="pause-stat-label">Tempo de Sobrevivência</span>
+            <span class="pause-stat-val" id="pause-stat-time">00:00</span>
+          </div>
+          <div class="pause-stat-box span-3">
+            <span class="pause-stat-label">Fragmentos Acumulados</span>
+            <span class="pause-stat-val gold" id="pause-stat-frags">+0 🔷</span>
+          </div>
+        </div>
+        <div class="modal-equipment-section" id="pause-equipment-slots">
+          <div class="modal-slots-label">MÓDULOS E PASSIVOS EQUIPADOS</div>
+          <div class="equipment-slots-bar in-modal">
+            <div class="slots-section slots-section-modules" title="Módulos Equipados (3 slots)">
+              <span class="slots-header-tag mod-tag">MOD</span>
+              <div class="slot-box slot-module empty" data-slot="mod-0"></div>
+              <div class="slot-box slot-module empty" data-slot="mod-1"></div>
+              <div class="slot-box slot-module empty" data-slot="mod-2"></div>
+            </div>
+            <div class="slots-divider"></div>
+            <div class="slots-section slots-section-passives" title="Passivos Equipados (4 slots)">
+              <span class="slots-header-tag pas-tag">PAS</span>
+              <div class="slot-box slot-passive empty" data-slot="pas-0"></div>
+              <div class="slot-box slot-passive empty" data-slot="pas-1"></div>
+              <div class="slot-box slot-passive empty" data-slot="pas-2"></div>
+              <div class="slot-box slot-passive empty" data-slot="pas-3"></div>
+            </div>
+          </div>
+        </div>
+        <div class="pause-actions-col">
+          <button class="pause-action-btn pause-resume-btn" id="btn-pause-resume" title="Continuar partida">
+            <span class="btn-icon">▶️</span>
+            <span class="btn-text">Continuar</span>
+          </button>
+          <button class="pause-action-btn pause-restart-btn" id="btn-pause-restart" title="Reiniciar partida">
+            <span class="btn-icon">🔄</span>
+            <span class="btn-text">Reiniciar Partida</span>
+          </button>
+          <button class="pause-action-btn pause-skills-btn" id="btn-pause-skills" title="Ver árvore de habilidades">
+            <span class="btn-icon">🌳</span>
+            <span class="btn-text">Ver Habilidades</span>
+          </button>
+          <button class="pause-action-btn pause-menu-btn" id="btn-pause-menu" title="Voltar à tela inicial">
+            <span class="btn-icon">🏠</span>
+            <span class="btn-text">Voltar ao Início</span>
+          </button>
+        </div>
+        <div class="pause-hotkey-footer">
+          Pressione <kbd>ESC</kbd> ou <kbd>P</kbd> para alternar a pausa
+        </div>
+      </div>
+    </div>
+
+    <!-- Script Principal -->
     <script type="module" src="js/main.js"></script>
   </body>
 </html>

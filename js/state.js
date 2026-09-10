@@ -93,6 +93,7 @@ export const state = {
   lastOfferedCards: [],
   minesCount: 3,
   playerMinesCount: 3,
+  playerTurretsCount: 0,
   playerStationaryTimer: 0,
   droneActive: false,
   droneType: "sentinela",

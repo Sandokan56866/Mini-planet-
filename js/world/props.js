@@ -39,10 +39,11 @@ import {
   MAX_SNOW_FENCES,
   PROP_COLORS,
   BARREL_FIRE_LIGHT_COLOR,
-  BARREL_FIRE_LIGHT_DISTANCE
+  BARREL_FIRE_LIGHT_DISTANCE,
+  WATER_PROP_BORDER_MARGIN
 } from "../config.js";
 import { state } from "../state.js";
-import { getRawElevation, fibonacciPoint } from "../core/math.js";
+import { getRawElevation, getStepIndex, fibonacciPoint } from "../core/math.js";
 import { getBiomeAt } from "./terrain.js";
 import { updateBiomeUI } from "../ui/hud.js";
 
@@ -427,8 +428,34 @@ export function initProps() {
   state.swampVapors = [];
 
   var acceptedProps = [];
+  var waterCheckTangent = new THREE.Vector3();
+  var waterCheckBitangent = new THREE.Vector3();
+  var waterCheckSample = new THREE.Vector3();
 
   function isCandidateTooClose(candidateDir, candidateAngR) {
+    // Garanta a passagem: nenhum obstáculo deve nascer dentro d'água nem na borda imediata
+    if (getStepIndex(candidateDir) < 0) return true;
+    var rawElev = getRawElevation(candidateDir);
+    if (rawElev < (SEA_LEVEL + WATER_PROP_BORDER_MARGIN)) return true;
+
+    // Amostra a borda imediata do colisor para que nunca invada a água nem tranque a transição
+    var checkMargin = (candidateAngR || 0.02) + 0.015;
+    waterCheckTangent.set(0, 1, 0).cross(candidateDir);
+    if (waterCheckTangent.lengthSq() < 0.001) waterCheckTangent.set(1, 0, 0).cross(candidateDir);
+    waterCheckTangent.normalize();
+    waterCheckBitangent.crossVectors(candidateDir, waterCheckTangent).normalize();
+
+    for (var qi = 0; qi < 4; qi++) {
+      var angleQ = qi * (Math.PI / 2);
+      waterCheckSample.copy(candidateDir)
+        .addScaledVector(waterCheckTangent, Math.cos(angleQ) * checkMargin)
+        .addScaledVector(waterCheckBitangent, Math.sin(angleQ) * checkMargin)
+        .normalize();
+      if (getStepIndex(waterCheckSample) < 0 || getRawElevation(waterCheckSample) < SEA_LEVEL) {
+        return true;
+      }
+    }
+
     for (var a = 0; a < acceptedProps.length; a++) {
       var acc = acceptedProps[a];
       var dot = candidateDir.dot(acc.dir);
@@ -450,13 +477,15 @@ export function initProps() {
     // Evita nascer na posição de spawn inicial do jogador
     if (pDir.y > 0.96) continue;
 
+    // Garanta a passagem: nenhum obstáculo deve nascer dentro d'água nem na borda imediata
+    if (getStepIndex(pDir) < 0) continue;
+    var elev = getRawElevation(pDir);
+    if (elev < (SEA_LEVEL + WATER_PROP_BORDER_MARGIN)) continue;
+
     // Raycast isolado no terrainMesh
     propRaycaster.set(pDir.clone().multiplyScalar(PLANET_BASE_RADIUS + 12), pDir.clone().negate());
     var hits = propRaycaster.intersectObject(state.terrainMesh, false);
     if (!hits || hits.length === 0) continue;
-
-    var elev = getRawElevation(pDir);
-    if (elev < SEA_LEVEL) continue;
 
     var hitPoint = hits[0].point;
     var biome = getBiomeAt(pDir);

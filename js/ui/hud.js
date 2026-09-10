@@ -1,7 +1,8 @@
 // O que faz: Gerencia a interface do jogo: anéis circulares de Vida e Stamina, pílula compacta de progresso,
-// tela de início com botão JOGAR, tela de árvore de habilidades permanente, botão de mudo e tela de fim de jogo com fragmentos.
+// tela de início com botão JOGAR, tela de árvore de habilidades permanente, botão de mudo, menu de pausa e tela de fim de jogo com fragmentos.
 // Exporta: initHUD, updateHUD, updateHpUI, updateStaminaUI, updateXpUI, updateKillsUI, updateWaveUI, updateWaveProgressUI,
-// showBigAnnouncement, triggerDamageFlash, showStartScreen, hideStartScreen, showSkillTreeModal, hideSkillTreeModal, updateMuteButtonUI, updateBiomeUI.
+// showBigAnnouncement, triggerDamageFlash, showStartScreen, hideStartScreen, showSkillTreeModal, hideSkillTreeModal, updateMuteButtonUI, updateBiomeUI,
+// showPauseModal, hidePauseModal, togglePauseGame.
 // Depende de: js/config.js, js/state.js, js/systems/audio.js, js/systems/meta.js
 
 import {
@@ -11,7 +12,10 @@ import {
   STAMINA_RECOVERY_MIN,
   HUD_RING_CIRCUMFERENCE,
   WEAPONS_CONFIG,
-  DRONE_TYPES
+  DRONE_TYPES,
+  MODULES_CONFIG,
+  PASSIVES_CONFIG,
+  RARITY_CONFIG
 } from "../config.js";
 import { state } from "../state.js";
 import { toggleMute, isMuted } from "../systems/audio.js";
@@ -72,6 +76,15 @@ var startFragValEl = null;
 var skillsTreeModal = null;
 var skillsTreeContent = null;
 var skillsTreeCloseBtn = null;
+
+// Modal de Pausa e Botão de Pausa
+var pauseBtnEl = null;
+var pauseModal = null;
+var pauseTimeValEl = null;
+var pauseWaveValEl = null;
+var pauseKillsValEl = null;
+var pauseLevelValEl = null;
+var pauseFragsValEl = null;
 
 var announceTimer = null;
 var lastFpsTime = 0;
@@ -134,6 +147,51 @@ export function updateCompactPill() {
   if (pillKillsEl) pillKillsEl.textContent = (state.killsCount || 0) + " 💀";
   if (pillLevelEl) pillLevelEl.textContent = "N" + (state.playerLevel || 1);
   if (pillXpEl) pillXpEl.textContent = Math.floor(state.playerXp || 0) + "/" + (state.xpNeeded || 100);
+  updateEquipmentSlotsUI();
+}
+
+export function updateEquipmentSlotsUI() {
+  var bar = document.getElementById("equipment-slots-bar");
+  if (!bar) return;
+
+  var equippedMods = state.equippedModules || [];
+  var equippedPass = state.equippedPassives || [];
+
+  for (var m = 0; m < 3; m++) {
+    var slotEl = document.getElementById("mod-slot-" + m);
+    if (!slotEl) continue;
+    if (m < equippedMods.length) {
+      var mKey = equippedMods[m];
+      var mUpg = (state.upgrades && state.upgrades[mKey]) || MODULES_CONFIG[mKey];
+      var mRank = mUpg ? (mUpg.rank !== undefined ? mUpg.rank : (mUpg.level || 1)) : 1;
+      var mIcon = (mUpg && mUpg.icon) || "⚙️";
+      slotEl.className = "slot-box slot-module filled";
+      slotEl.innerHTML = '<span class="slot-icon">' + mIcon + '</span><span class="slot-rank">' + mRank + '</span>';
+      slotEl.title = (mUpg ? mUpg.name : mKey) + " (Nv." + mRank + ")";
+    } else {
+      slotEl.className = "slot-box slot-module empty";
+      slotEl.innerHTML = "";
+      slotEl.title = "Slot de Módulo Vazio (" + (3 - equippedMods.length) + " restantes)";
+    }
+  }
+
+  for (var p = 0; p < 4; p++) {
+    var pSlotEl = document.getElementById("pas-slot-" + p);
+    if (!pSlotEl) continue;
+    if (p < equippedPass.length) {
+      var pKey = equippedPass[p];
+      var pUpg = (state.upgrades && state.upgrades[pKey]) || PASSIVES_CONFIG[pKey];
+      var pRank = pUpg ? (pUpg.rank !== undefined ? pUpg.rank : (pUpg.level || 1)) : 1;
+      var pIcon = (pUpg && pUpg.icon) || "⚡";
+      pSlotEl.className = "slot-box slot-passive filled";
+      pSlotEl.innerHTML = '<span class="slot-icon">' + pIcon + '</span><span class="slot-rank">' + pRank + '</span>';
+      pSlotEl.title = (pUpg ? pUpg.name : pKey) + " (Nv." + pRank + ")";
+    } else {
+      pSlotEl.className = "slot-box slot-passive empty";
+      pSlotEl.innerHTML = "";
+      pSlotEl.title = "Slot de Passivo Vazio (" + (4 - equippedPass.length) + " restantes)";
+    }
+  }
 }
 
 export function updateXpUI() {
@@ -300,6 +358,7 @@ export function hideBossBar() {
 // 5. MODAL DE LEVEL UP E SELEÇÃO DE DRONE
 // ==========================================
 export function showLevelUpModal(cards, onSelect) {
+  hidePauseModal();
   if (!levelupModal || !upgradeCardsGrid) return;
   upgradeCardsGrid.innerHTML = "";
 
@@ -308,7 +367,7 @@ export function showLevelUpModal(cards, onSelect) {
   var subEl = levelupModal.querySelector(".levelup-sub");
   if (badgeEl) badgeEl.textContent = "⭐ Subiu de Nível!";
   if (titleEl) titleEl.textContent = "Escolha uma Melhoria";
-  if (subEl) subEl.textContent = "Fortaleça suas habilidades para enfrentar as hordas seguintes.";
+  if (subEl) subEl.textContent = "Selecione para expandir seus módulos ou aprimorar passivos:";
 
   if (levelFlashEl) {
     levelFlashEl.classList.remove("flash");
@@ -323,18 +382,69 @@ export function showLevelUpModal(cards, onSelect) {
     var upg = state.upgrades[key];
     if (!upg) return;
 
+    var rarity = (state.offeredRarities && state.offeredRarities[key]) || "comum";
+    var isModule = Boolean(MODULES_CONFIG[key] || upg.category === "module");
+    var categoryKey = isModule ? "module" : "passive";
+    var categoryName = isModule ? "MÓDULO" : "PASSIVO";
+    var categoryIcon = isModule ? "⚙️" : "⚡";
+
+    var isEquipped = false;
+    if (isModule) {
+      isEquipped = (state.equippedModules || []).indexOf(key) !== -1;
+    } else {
+      isEquipped = (state.equippedPassives || []).indexOf(key) !== -1;
+    }
+
+    var currentRank = upg.rank !== undefined ? upg.rank : (upg.level || 0);
+    var nextRank = currentRank + 1;
+
+    var rawName = upg.name || key;
+    var cleanName = rawName.replace(/<[^>]*>/g, "").replace(/✦.*/g, "").replace(/★.*/g, "").trim();
+    var cleanDesc = (upg.desc || "").replace(/<[^>]*>/g, "").trim();
+
+    var statusClass = isEquipped ? "status-upgrade" : "status-new";
+    var statusText = isEquipped ? "EQUIPADO" : "NOVO " + categoryName;
+    var progressionText = isEquipped
+      ? (cleanName + " Nv." + currentRank + " → Nv." + nextRank)
+      : ("Novo " + categoryName + " → Nv.1");
+
+    var rarityLabel = rarity === "prototipica" ? "PROTOTÍPICA" : (rarity === "rara" ? "RARA" : "COMUM");
+    var rarityIcon = rarity === "prototipica" ? "★" : (rarity === "rara" ? "✦" : "▫");
+
     var btn = document.createElement("button");
-    btn.className = "upgrade-card-btn";
+    btn.className = "upgrade-card-btn cat-" + categoryKey + " rarity-" + rarity;
+    btn.setAttribute("type", "button");
     btn.innerHTML =
-      '<div class="upg-icon-col">' + upg.icon + '</div>' +
-      '<div class="upg-info-col">' +
-      '<div class="upg-level-pill">Nvl ' + upg.level + ' ➔ ' + (upg.level + 1) + '</div>' +
-      '<div class="upg-name">' + upg.name + '</div>' +
-      '<div class="upg-desc">' + upg.desc + '</div>' +
+      '<div class="card-side-accent"></div>' +
+      '<div class="card-inner">' +
+        '<div class="card-badges-row">' +
+          '<div class="card-category-badge cat-' + categoryKey + '">' +
+            '<span class="cat-icon">' + categoryIcon + '</span>' +
+            '<span class="cat-name">' + categoryName + '</span>' +
+          '</div>' +
+          '<div class="card-status-pill ' + statusClass + '">' + statusText + '</div>' +
+          '<div class="card-rarity-pill rarity-' + rarity + '">' +
+            '<span class="rarity-icon">' + rarityIcon + '</span>' +
+            '<span class="rarity-name">' + rarityLabel + '</span>' +
+          '</div>' +
+        '</div>' +
+        '<div class="card-content-row">' +
+          '<div class="upg-icon-frame cat-' + categoryKey + '">' +
+            '<span class="upg-big-icon">' + (upg.icon || "⭐") + '</span>' +
+          '</div>' +
+          '<div class="upg-details-col">' +
+            '<div class="upg-header-line">' +
+              '<span class="upg-title">' + cleanName + '</span>' +
+              '<span class="upg-progression-pill">' + progressionText + '</span>' +
+            '</div>' +
+            '<div class="upg-description">' + cleanDesc + '</div>' +
+          '</div>' +
+        '</div>' +
       '</div>';
 
     btn.onclick = function () {
       onSelect(key);
+      updateEquipmentSlotsUI();
     };
     upgradeCardsGrid.appendChild(btn);
   });
@@ -359,17 +469,31 @@ export function showDroneSelectionModal(onSelect) {
     if (!dCfg) return;
 
     var btn = document.createElement("button");
-    btn.className = "upgrade-card-btn drone-type-card";
+    btn.className = "upgrade-card-btn cat-module rarity-rara drone-type-card";
+    btn.setAttribute("type", "button");
     btn.innerHTML =
-      '<div class="upg-icon-col">' + (dCfg.icon || "🛸") + '</div>' +
-      '<div class="upg-info-col">' +
-      '<div class="upg-level-pill">Companheiro Permanente</div>' +
-      '<div class="upg-name">' + dCfg.name + '</div>' +
-      '<div class="upg-desc">' + dCfg.desc + '</div>' +
+      '<div class="card-side-accent"></div>' +
+      '<div class="card-inner">' +
+        '<div class="card-badges-row">' +
+          '<div class="card-category-badge cat-module"><span class="cat-icon">🛸</span> MÓDULO</div>' +
+          '<div class="card-status-pill status-new">COMPANHEIRO</div>' +
+          '<div class="card-rarity-pill rarity-rara"><span class="rarity-icon">✦</span> ESPECIAL</div>' +
+        '</div>' +
+        '<div class="card-content-row">' +
+          '<div class="upg-icon-frame cat-module"><span class="upg-big-icon">' + (dCfg.icon || "🛸") + '</span></div>' +
+          '<div class="upg-details-col">' +
+            '<div class="upg-header-line">' +
+              '<span class="upg-title">' + dCfg.name + '</span>' +
+              '<span class="upg-progression-pill">Novo Módulo</span>' +
+            '</div>' +
+            '<div class="upg-description">' + dCfg.desc + '</div>' +
+          '</div>' +
+        '</div>' +
       '</div>';
 
     btn.onclick = function () {
       onSelect(tipo);
+      updateEquipmentSlotsUI();
     };
     upgradeCardsGrid.appendChild(btn);
   });
@@ -379,6 +503,7 @@ export function showDroneSelectionModal(onSelect) {
 
 export function hideLevelUpModal() {
   if (levelupModal) levelupModal.style.display = "none";
+  updateEquipmentSlotsUI();
 }
 
 // ==========================================
@@ -395,6 +520,7 @@ export function updateMuteButtonUI(muted) {
 // 7. TELA DE INÍCIO ("JOGAR" / "HABILIDADES")
 // ==========================================
 export function showStartScreen(isRestart) {
+  hidePauseModal();
   if (!startScreenModal) return;
   if (startFragValEl) {
     startFragValEl.textContent = getFragments();
@@ -428,6 +554,7 @@ export function hideSkillTreeModal() {
 // 9. MODAL DE FIM DE JOGO COM FRAGMENTOS
 // ==========================================
 export function showGameOverModal() {
+  hidePauseModal();
   if (!gameoverModal) return;
   if (finalKillsEl) finalKillsEl.textContent = state.killsCount || 0;
   if (finalWavesEl) finalWavesEl.textContent = state.currentWave || 1;
@@ -457,6 +584,84 @@ export function showGameOverModal() {
 
 export function hideGameOverModal() {
   if (gameoverModal) gameoverModal.style.display = "none";
+}
+
+// ==========================================
+// 10. MODAL E CONTROLE DO MENU DE PAUSA
+// ==========================================
+function formatSurvivalTime(seconds) {
+  var mins = Math.floor(seconds / 60);
+  var secs = seconds % 60;
+  return (mins < 10 ? "0" : "") + mins + ":" + (secs < 10 ? "0" : "") + secs;
+}
+
+export function showPauseModal() {
+  if (!pauseModal) return;
+  if (!state.gameStarted || state.isGameOver || state.isLevelUpPaused) return;
+
+  state.isPaused = true;
+  state.pauseStartTime = Date.now();
+  document.body.classList.add("game-paused");
+
+  // Atenua áudio de ambiente
+  if (state.attenuateAmbience) {
+    state.attenuateAmbience(true);
+  }
+
+  // Desativa joystick imediatamente
+  state.joyTouchId = null;
+  state.isJoystickActive = false;
+  state.joyX = 0;
+  state.joyY = 0;
+  var knob = document.getElementById("joystick-knob");
+  if (knob) knob.style.transform = "translate(0px, 0px)";
+
+  // Atualiza dados e estatísticas no painel de status da run
+  var elapsedSec = Math.max(0, Math.floor((Date.now() - (state.gameStartTime || Date.now())) / 1000));
+  if (pauseTimeValEl) pauseTimeValEl.textContent = formatSurvivalTime(elapsedSec);
+  if (pauseWaveValEl) pauseWaveValEl.textContent = state.currentWave || 1;
+  if (pauseLevelValEl) pauseLevelValEl.textContent = "Nv. " + (state.playerLevel || 1);
+  if (pauseKillsValEl) pauseKillsValEl.textContent = (state.killsCount || 0) + " 💀";
+
+  // Fragmentos acumulados nesta run
+  var earnedFrags = calculateRunFragments(state.currentWave || 1, state.killsCount || 0);
+  if (pauseFragsValEl) pauseFragsValEl.textContent = "+" + earnedFrags + " 🔷";
+
+  pauseModal.style.display = "flex";
+}
+
+export function hidePauseModal() {
+  if (pauseModal) {
+    pauseModal.style.display = "none";
+  }
+  document.body.classList.remove("game-paused");
+
+  // Congelamento de tempo: compensa o tempo decorrido durante a pausa para que nenhum temporizador avance
+  if (state.pauseStartTime) {
+    var pausedDuration = Date.now() - state.pauseStartTime;
+    state.gameStartTime = (state.gameStartTime || Date.now()) + pausedDuration;
+    state.pauseStartTime = null;
+  }
+
+  state.isPaused = false;
+  state.joyTouchId = null;
+  state.isJoystickActive = false;
+  state.joyX = 0;
+  state.joyY = 0;
+
+  // Restaura áudio de ambiente
+  if (state.attenuateAmbience) {
+    state.attenuateAmbience(false);
+  }
+}
+
+export function togglePauseGame() {
+  if (!state.gameStarted || state.isGameOver || state.isLevelUpPaused) return;
+  if (state.isPaused) {
+    hidePauseModal();
+  } else {
+    showPauseModal();
+  }
 }
 
 // ==========================================
@@ -578,9 +783,12 @@ export function initHUD() {
     ringsGroup.appendChild(staminaWrap);
     mainRow.appendChild(ringsGroup);
 
-    // Estatísticas Compactas e Áudio
+    // Estatísticas Compactas, Áudio e Barra de Equipamentos (Canto Superior Direito)
     var statsCompactContainer = document.createElement("div");
     statsCompactContainer.className = "stats-compact-container";
+
+    var statsTopRow = document.createElement("div");
+    statsTopRow.className = "stats-top-row";
 
     var compactPill = document.createElement("div");
     compactPill.className = "compact-pill";
@@ -595,13 +803,13 @@ export function initHUD() {
       '<span class="pill-item" id="pill-xp">0/120</span>' +
       '<span class="pill-dot">•</span>' +
       '<span class="pill-item" id="biome-display" style="color: #e2e8f0;">🏙️ Subúrbio</span>';
-    statsCompactContainer.appendChild(compactPill);
+    statsTopRow.appendChild(compactPill);
 
     var fpsEl = document.createElement("div");
     fpsEl.className = "fps-tiny";
     fpsEl.id = "fps-counter";
     fpsEl.textContent = "60 FPS";
-    statsCompactContainer.appendChild(fpsEl);
+    statsTopRow.appendChild(fpsEl);
 
     // Botão de Alternância de Som (Mudo)
     var muteBtn = document.createElement("button");
@@ -614,7 +822,45 @@ export function initHUD() {
       var nowMuted = toggleMute();
       updateMuteButtonUI(nowMuted);
     });
-    statsCompactContainer.appendChild(muteBtn);
+    statsTopRow.appendChild(muteBtn);
+
+    // Botão de Pausa no Topo Direito
+    var pauseBtn = document.createElement("button");
+    pauseBtn.className = "pause-btn";
+    pauseBtn.id = "pause-btn";
+    pauseBtn.textContent = "⏸️";
+    pauseBtn.title = "Pausar o jogo (Esc ou P)";
+    pauseBtn.setAttribute("aria-label", "Pausar jogo");
+    pauseBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      e.preventDefault();
+      togglePauseGame();
+    });
+    statsTopRow.appendChild(pauseBtn);
+    pauseBtnEl = pauseBtn;
+
+    statsCompactContainer.appendChild(statsTopRow);
+
+    // Barra Permanente de Equipamentos: 3 Módulos + 4 Passivos
+    var equipmentSlotsBar = document.createElement("div");
+    equipmentSlotsBar.className = "equipment-slots-bar";
+    equipmentSlotsBar.id = "equipment-slots-bar";
+    equipmentSlotsBar.innerHTML =
+      '<div class="slots-section slots-section-modules" title="Módulos Equipados (3 slots)">' +
+        '<span class="slots-header-tag mod-tag">MOD</span>' +
+        '<div class="slot-box slot-module empty" id="mod-slot-0"></div>' +
+        '<div class="slot-box slot-module empty" id="mod-slot-1"></div>' +
+        '<div class="slot-box slot-module empty" id="mod-slot-2"></div>' +
+      '</div>' +
+      '<div class="slots-divider"></div>' +
+      '<div class="slots-section slots-section-passives" title="Passivos Equipados (4 slots)">' +
+        '<span class="slots-header-tag pas-tag">PAS</span>' +
+        '<div class="slot-box slot-passive empty" id="pas-slot-0"></div>' +
+        '<div class="slot-box slot-passive empty" id="pas-slot-1"></div>' +
+        '<div class="slot-box slot-passive empty" id="pas-slot-2"></div>' +
+        '<div class="slot-box slot-passive empty" id="pas-slot-3"></div>' +
+      '</div>';
+    statsCompactContainer.appendChild(equipmentSlotsBar);
 
     mainRow.appendChild(statsCompactContainer);
     topBar.appendChild(mainRow);
@@ -816,6 +1062,112 @@ export function initHUD() {
     });
   }
 
+  // CRIAÇÃO DO MODAL DE MENU DE PAUSA (PAUSE OVERLAY)
+  pauseModal = document.getElementById("pause-modal");
+  if (!pauseModal) {
+    pauseModal = document.createElement("div");
+    pauseModal.id = "pause-modal";
+    pauseModal.className = "pause-overlay";
+    pauseModal.innerHTML =
+      '<div class="pause-card">' +
+        '<div class="pause-badge">MODO DE PAUSA</div>' +
+        '<h2 class="pause-title">Pausado</h2>' +
+        '<p class="pause-subtitle">Partida suspensa. Consulte seu progresso ou escolha uma ação.</p>' +
+        '<div class="pause-stats-grid">' +
+          '<div class="pause-stat-box span-2">' +
+            '<span class="pause-stat-label">Onda Atual</span>' +
+            '<span class="pause-stat-val cyan" id="pause-stat-wave">1</span>' +
+          '</div>' +
+          '<div class="pause-stat-box span-2">' +
+            '<span class="pause-stat-label">Nível</span>' +
+            '<span class="pause-stat-val" id="pause-stat-level">Nv. 1</span>' +
+          '</div>' +
+          '<div class="pause-stat-box span-2">' +
+            '<span class="pause-stat-label">Total de Abates</span>' +
+            '<span class="pause-stat-val" id="pause-stat-kills">0 💀</span>' +
+          '</div>' +
+          '<div class="pause-stat-box span-3">' +
+            '<span class="pause-stat-label">Tempo de Sobrevivência</span>' +
+            '<span class="pause-stat-val" id="pause-stat-time">00:00</span>' +
+          '</div>' +
+          '<div class="pause-stat-box span-3">' +
+            '<span class="pause-stat-label">Fragmentos Acumulados</span>' +
+            '<span class="pause-stat-val gold" id="pause-stat-frags">+0 🔷</span>' +
+          '</div>' +
+        '</div>' +
+        '<div class="pause-actions-col">' +
+          '<button class="pause-action-btn pause-resume-btn" id="btn-pause-resume" title="Continuar partida">' +
+            '<span class="btn-icon">▶️</span>' +
+            '<span class="btn-text">Continuar</span>' +
+          '</button>' +
+          '<button class="pause-action-btn pause-restart-btn" id="btn-pause-restart" title="Reiniciar partida">' +
+            '<span class="btn-icon">🔄</span>' +
+            '<span class="btn-text">Reiniciar Partida</span>' +
+          '</button>' +
+          '<button class="pause-action-btn pause-skills-btn" id="btn-pause-skills" title="Ver árvore de habilidades">' +
+            '<span class="btn-icon">🌳</span>' +
+            '<span class="btn-text">Ver Habilidades</span>' +
+          '</button>' +
+          '<button class="pause-action-btn pause-menu-btn" id="btn-pause-menu" title="Voltar à tela inicial">' +
+            '<span class="btn-icon">🏠</span>' +
+            '<span class="btn-text">Voltar ao Início</span>' +
+          '</button>' +
+        '</div>' +
+        '<div class="pause-hotkey-footer">' +
+          'Pressione <kbd>ESC</kbd> ou <kbd>P</kbd> para alternar a pausa' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(pauseModal);
+  }
+
+  pauseTimeValEl = pauseModal.querySelector("#pause-stat-time");
+  pauseWaveValEl = pauseModal.querySelector("#pause-stat-wave");
+  pauseKillsValEl = pauseModal.querySelector("#pause-stat-kills");
+  pauseLevelValEl = pauseModal.querySelector("#pause-stat-level");
+  pauseFragsValEl = pauseModal.querySelector("#pause-stat-frags");
+
+  var btnResume = pauseModal.querySelector("#btn-pause-resume");
+  if (btnResume) {
+    btnResume.addEventListener("click", function (e) {
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      hidePauseModal();
+    });
+  }
+
+  var btnRestart = pauseModal.querySelector("#btn-pause-restart");
+  if (btnRestart) {
+    btnRestart.addEventListener("click", function (e) {
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      hidePauseModal();
+      if (state.resetGame) {
+        state.resetGame();
+      } else if (state.progression && state.progression.restartGame) {
+        state.progression.restartGame();
+      }
+    });
+  }
+
+  var btnSkills = pauseModal.querySelector("#btn-pause-skills");
+  if (btnSkills) {
+    btnSkills.addEventListener("click", function (e) {
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      showSkillTreeModal();
+    });
+  }
+
+  var btnMenu = pauseModal.querySelector("#btn-pause-menu");
+  if (btnMenu) {
+    btnMenu.addEventListener("click", function (e) {
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      hidePauseModal();
+      state.gameStarted = false;
+      if (state.sounds && state.sounds.stopMusic) {
+        state.sounds.stopMusic();
+      }
+      showStartScreen(true);
+    });
+  }
+
   // Registra métodos de UI no state global
   state.ui.updateHpUI = updateHpUI;
   state.ui.updateStaminaUI = updateStaminaUI;
@@ -839,12 +1191,16 @@ export function initHUD() {
   state.ui.updateMuteButtonUI = updateMuteButtonUI;
   state.ui.showStartScreen = showStartScreen;
   state.ui.hideStartScreen = hideStartScreen;
+  state.ui.showPauseModal = showPauseModal;
+  state.ui.hidePauseModal = hidePauseModal;
+  state.ui.togglePauseGame = togglePauseGame;
   state.ui.showSkillTreeModal = showSkillTreeModal;
   state.ui.hideSkillTreeModal = hideSkillTreeModal;
   state.ui.updateBombsUI = updateBombsUI;
   state.ui.updateDroneIndicatorUI = updateDroneIndicatorUI;
   state.ui.showDroneSelectionModal = showDroneSelectionModal;
   state.ui.updateBiomeUI = updateBiomeUI;
+  state.ui.updateEquipmentSlotsUI = updateEquipmentSlotsUI;
 
   updateHpUI();
   updateStaminaUI();
@@ -852,6 +1208,7 @@ export function initHUD() {
   updateWeaponUI();
   updateBombsUI();
   updateDroneIndicatorUI();
+  updateEquipmentSlotsUI();
   updateMuteButtonUI(isMuted());
 }
 
@@ -860,6 +1217,12 @@ export function initHUD() {
 // ==========================================
 export function updateHUD(dt) {
   updateStaminaUI();
+
+  if (pauseBtnEl) {
+    var canPause = Boolean(state.gameStarted && !state.isGameOver && !state.isLevelUpPaused);
+    pauseBtnEl.style.display = canPause ? "flex" : "none";
+    pauseBtnEl.disabled = !canPause;
+  }
 
   frameCounter++;
   var now = performance.now();

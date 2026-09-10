@@ -8,6 +8,10 @@
 export const PLANET_BASE_RADIUS = 22.0;
 export const WATER_RADIUS = 21.84;
 export const SEA_LEVEL = 0.32;
+export const WATER_SPEED_FACTOR = 0.55; // Redução de velocidade na água (55% da velocidade padrão)
+export const WATER_SINK_OFFSET = 0.12; // Afundamento vertical suave do personagem na água
+export const WATER_SPLASH_COLOR = 0xd4f1f9; // Cor clara/espuma para partículas de respingo d'água
+export const WATER_PROP_BORDER_MARGIN = 0.04; // Margem de segurança de elevação na margem d'água para passagens livres
 export const STEP_HEIGHT = 0.28;
 export const TOTAL_STEPS = 7;
 export const DEBUG = false;
@@ -369,7 +373,51 @@ export const MAX_ACTIVE_ZOMBIES_LIMIT = 90;
 export const INITIAL_ZOMBIES_COUNT = 12;
 export const ZOMBIE_HIT_FLASH_DURATION = 0.08;
 export const ZOMBIE_DIE_DURATION = 0.8;
-export const ZOMBIE_ATTACK_RADIUS = 0.045; // radianos na esfera (~1 unidade)
+export const ZOMBIE_ATTACK_RADIUS = 0.022; // radianos na esfera (~0.48 unidades - contato corporal real)
+export const ZOMBIE_ATTACK_INTERVAL = 1.1; // intervalo base de recarga do ataque (segundos)
+export const ZOMBIE_ATTACK_WINDUP_DURATION = 0.35; // duração da telegrafia/antecipação antes do golpe (segundos)
+
+// Intervalo de recarga de ataque próprio por tipo (enxame mais rápido, tanque e chefes mais lentos)
+export const ZOMBIE_ATTACK_INTERVALS = {
+  common: 1.10,
+  runner: 0.95,
+  tank: 1.65,
+  spitter: 1.30,
+  crawler: 1.10,
+  swarm: 0.75,
+  armored: 1.25,
+  screamer: 1.10,
+  boss: 1.70,
+  butcher: 1.85
+};
+
+// Duração da fase de windup/antecipação por tipo
+export const ZOMBIE_ATTACK_WINDUP_DURATIONS = {
+  common: 0.35,
+  runner: 0.30,
+  tank: 0.45,
+  spitter: 0.35,
+  crawler: 0.35,
+  swarm: 0.22,
+  armored: 0.38,
+  screamer: 0.35,
+  boss: 0.45,
+  butcher: 0.50
+};
+
+export function getZombieAttackInterval(type, bossSubtype) {
+  if (type === "boss" && bossSubtype === "butcher") {
+    return ZOMBIE_ATTACK_INTERVALS.butcher || 1.85;
+  }
+  return (ZOMBIE_ATTACK_INTERVALS && ZOMBIE_ATTACK_INTERVALS[type]) || ZOMBIE_ATTACK_INTERVAL;
+}
+
+export function getZombieAttackWindup(type, bossSubtype) {
+  if (type === "boss" && bossSubtype === "butcher") {
+    return ZOMBIE_ATTACK_WINDUP_DURATIONS.butcher || 0.50;
+  }
+  return (ZOMBIE_ATTACK_WINDUP_DURATIONS && ZOMBIE_ATTACK_WINDUP_DURATIONS[type]) || ZOMBIE_ATTACK_WINDUP_DURATION;
+}
 
 // Raios angulares efetivos do corpo por tipo de zumbi (na esfera R=22)
 export const ZOMBIE_BODY_RADII = {
@@ -1260,22 +1308,200 @@ export const WAVE_MAX_SIMULTANEOUS_ZOMBIES = [
 export const BASE_XP_NEEDED = 120;
 export const XP_GROWTH_FACTOR = 1.55;
 
+// ==========================================
+// 11. REFORMULAÇÃO DA PROGRESSÃO: SLOTS, RARIDADE E TABELAS
+// ==========================================
+export const MAX_MODULE_SLOTS = 3;
+export const MAX_PASSIVE_SLOTS = 4;
+
+export const RARITY_CONFIG = {
+  comum: {
+    id: "comum",
+    name: "Comum",
+    color: "#9ca3af",
+    multiplier: 1.0,
+    badge: ""
+  },
+  rara: {
+    id: "rara",
+    name: "Rara",
+    color: "#38bdf8",
+    multiplier: 1.6,
+    badge: "✦ RARA"
+  },
+  prototipica: {
+    id: "prototipica",
+    name: "Prototípica",
+    color: "#f59e0b",
+    multiplier: 2.5,
+    badge: "★ PROTOTÍPICA"
+  }
+};
+
+export const RARITY_MULTIPLIERS = {
+  comum: 1.0,
+  rara: 1.6,
+  prototipica: 2.5
+};
+
+export const RARITY_WEIGHTS_BY_WAVE = [
+  // Ondas 1 a 3: Quase tudo comum, introdução sutil de raras
+  { maxWave: 3, weights: { comum: 88, rara: 12, prototipica: 0 } },
+  // Ondas 4 a 6: Raras aparecem com consistência
+  { maxWave: 6, weights: { comum: 68, rara: 28, prototipica: 4 } },
+  // Ondas 7 a 9: Boa presença de raras e primeiras prototípicas
+  { maxWave: 9, weights: { comum: 46, rara: 42, prototipica: 12 } },
+  // Ondas 10 a 14: Raras e prototípicas dominam a progressão
+  { maxWave: 14, weights: { comum: 28, rara: 46, prototipica: 26 } },
+  // Ondas 15+: Prototípicas frequentes e alto poder
+  { maxWave: Infinity, weights: { comum: 14, rara: 44, prototipica: 42 } }
+];
+
+export function getRarityForWave(wave) {
+  var w = wave || 1;
+  for (var i = 0; i < RARITY_WEIGHTS_BY_WAVE.length; i++) {
+    var tier = RARITY_WEIGHTS_BY_WAVE[i];
+    if (w <= tier.maxWave) {
+      var weights = tier.weights;
+      var total = 0;
+      for (var k in weights) {
+        total += weights[k];
+      }
+      var rand = Math.random() * total;
+      var acc = 0;
+      for (var rName in weights) {
+        acc += weights[rName];
+        if (rand <= acc) {
+          return rName;
+        }
+      }
+      return "comum";
+    }
+  }
+  return "comum";
+}
+
+export const MODULES_CONFIG = {
+  drone: {
+    category: "module",
+    level: 0,
+    max: 4,
+    name: "Drone de Combate",
+    icon: "🛸",
+    desc: "Ativa um drone de suporte orbital permanente com especialização tática"
+  },
+  blades: {
+    category: "module",
+    level: 0,
+    max: 4,
+    name: "Lâminas Orbitais",
+    icon: "⚔️",
+    desc: "3 discos serrilhados permanentes orbitam o jogador causando dano por contato"
+  },
+  mines: {
+    category: "module",
+    level: 0,
+    max: 4,
+    name: "Minas Terrestres",
+    icon: "💣",
+    desc: "Planta automaticamente minas explosivas no solo ao desacelerar"
+  },
+  turret: {
+    category: "module",
+    level: 0,
+    max: 4,
+    name: "Torreta Automática",
+    icon: "📡",
+    desc: "Instala sentinela de suporte autônoma que dispara contra zumbis próximos"
+  },
+  machinegun: {
+    category: "module",
+    level: 0,
+    max: 4,
+    name: "Metralhadora",
+    icon: "⚡",
+    desc: "Arma permanente de disparo contínuo com alta cadência e poder de supressão"
+  }
+};
+
+export const PASSIVES_CONFIG = {
+  fireRate: {
+    category: "passive",
+    level: 0,
+    max: 5,
+    name: "Cadência de Tiro",
+    icon: "⚡",
+    desc: "+25% velocidade de disparo"
+  },
+  damage: {
+    category: "passive",
+    level: 0,
+    max: 5,
+    name: "Dano de Tiro",
+    icon: "💥",
+    desc: "+1 de dano por tiro"
+  },
+  spread: {
+    category: "passive",
+    level: 0,
+    max: 5,
+    name: "Projéteis Extras",
+    icon: "🏹",
+    desc: "+1 projétil em leque"
+  },
+  range: {
+    category: "passive",
+    level: 0,
+    max: 5,
+    name: "Alcance",
+    icon: "🎯",
+    desc: "Eixo central: amplia o alcance de mira e distância dos projéteis"
+  },
+  moveSpeed: {
+    category: "passive",
+    level: 0,
+    max: 5,
+    name: "Velocidade",
+    icon: "👟",
+    desc: "+15% velocidade ao andar"
+  },
+  maxHp: {
+    category: "passive",
+    level: 0,
+    max: 5,
+    name: "Vida Máxima",
+    icon: "💖",
+    desc: "+25 HP máximo e cura total"
+  },
+  piercing: {
+    category: "passive",
+    level: 0,
+    max: 5,
+    name: "Tiro Perfurante",
+    icon: "🗡️",
+    desc: "+1 penetração de zumbi"
+  },
+  magnet: {
+    category: "passive",
+    level: 0,
+    max: 5,
+    name: "Ímã de XP",
+    icon: "🧲",
+    desc: "+35% raio de atração de XP"
+  },
+  bombRadius: {
+    category: "passive",
+    level: 0,
+    max: 5,
+    name: "Carga Ampliada",
+    icon: "💣",
+    desc: "+25% no raio de explosão da bomba"
+  }
+};
+
 export const UPGRADES_CONFIG = {
-  fireRate: { level: 0, max: 8, name: "Cadência de Tiro", icon: "⚡", desc: "+25% velocidade de disparo" },
-  damage: { level: 0, max: 8, name: "Dano de Tiro", icon: "💥", desc: "+1 de dano por tiro" },
-  spread: { level: 0, max: 5, name: "Projéteis Extras", icon: "🏹", desc: "+1 projétil em leque" },
-  range: { level: 0, max: 8, name: "Alcance", icon: "🎯", desc: "Eixo central: amplia o alcance de mira e distância dos projéteis" },
-  moveSpeed: { level: 0, max: 6, name: "Velocidade", icon: "👟", desc: "+15% velocidade ao andar" },
-  maxHp: { level: 0, max: 8, name: "Vida Máxima", icon: "💖", desc: "+25 HP máximo e cura total" },
-  instantHeal: { level: 0, max: 8, name: "Cura Instantânea", icon: "🧪", desc: "Cura +50 HP imediatamente" },
-  bombRadius: { level: 0, max: 4, name: "Carga Ampliada", icon: "💣", desc: "+25% no raio de explosão da bomba" },
-  piercing: { level: 0, max: 4, name: "Tiro Perfurante", icon: "🗡️", desc: "+1 penetração de zumbi" },
-  magnet: { level: 0, max: 5, name: "Ímã de XP", icon: "🧲", desc: "+35% raio de atração de XP" },
-  droneUnlock: { level: 0, max: 1, name: "Drone de Combate", icon: "🛸", desc: "Ativa um drone de suporte orbital permanente com especialização" },
-  droneDamage: { level: 0, max: 4, name: "Drone: Canhão Pesado", icon: "🎯", desc: "+35% de dano nos tiros do drone" },
-  droneCadence: { level: 0, max: 4, name: "Drone: Tiro Rápido", icon: "⚡", desc: "+25% de cadência do drone" },
-  droneCount: { level: 0, max: 2, name: "Drone: Esquadrão", icon: "🛸", desc: "+1 drone auxiliar adicional" },
-  machinegun: { level: 0, max: 1, name: "Metralhadora Permanente", icon: "🔫", desc: "Substitui a pistola com 4x cadência de tiro" }
+  ...MODULES_CONFIG,
+  ...PASSIVES_CONFIG
 };
 
 // ==========================================

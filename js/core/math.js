@@ -87,7 +87,8 @@ export function getMoisture(dir) {
   );
 }
 
-export function getStepIndex(rawElev) {
+export function getStepIndex(input) {
+  var rawElev = (input && typeof input === "object" && ("x" in input || "isVector3" in input)) ? getRawElevation(input) : input;
   if (rawElev < SEA_LEVEL) return -1;
   var h = Math.max(0, Math.min(1, (rawElev - SEA_LEVEL) / 0.44));
   var step = Math.floor(h * TOTAL_STEPS);

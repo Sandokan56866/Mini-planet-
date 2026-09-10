@@ -4,6 +4,8 @@
 
 import {
   PLANET_BASE_RADIUS,
+  WATER_RADIUS,
+  WATER_SPLASH_COLOR,
   MAX_BULLETS,
   MAX_PICKUPS,
   BASE_SHOOT_INTERVAL,
@@ -475,6 +477,8 @@ export function triggerDeathDust(originPos, count) {
         dp.active = true;
         dp.life = 0.55 + Math.random() * 0.25;
         dp.maxLife = dp.life;
+        dp.mesh.material.color.setHex(0x221c1a);
+        dp.mesh.scale.set(1, 1, 1);
         dp.mesh.position.copy(originPos);
         dp.mesh.position.x += (Math.random() - 0.5) * 0.3;
         dp.mesh.position.y += (Math.random() - 0.5) * 0.3;
@@ -489,6 +493,47 @@ export function triggerDeathDust(originPos, count) {
         dp.mesh.visible = true;
         break;
       }
+    }
+  }
+}
+
+// Reaproveita o sistema de partículas de poeira para gerar respingos claros e discretos na água
+export function triggerWaterSplash(origin, count) {
+  if (!state.darkParticles || state.darkParticles.length === 0) return;
+  var pCount = count || 3;
+  var basePos = new THREE.Vector3();
+  if (origin && typeof origin === "object") {
+    if (origin.lengthSq() < 2.0) {
+      // Vetor de direção normalizada na esfera: posiciona na superfície da água
+      basePos.copy(origin).multiplyScalar(WATER_RADIUS + 0.04);
+    } else {
+      basePos.copy(origin);
+    }
+  }
+
+  var spawned = 0;
+  for (var di = 0; di < state.darkParticles.length; di++) {
+    var dp = state.darkParticles[di];
+    if (!dp.active) {
+      dp.active = true;
+      dp.life = 0.28 + Math.random() * 0.12;
+      dp.maxLife = dp.life;
+      dp.mesh.material.color.setHex(WATER_SPLASH_COLOR);
+      dp.mesh.scale.set(0.55, 0.55, 0.55);
+      dp.mesh.position.copy(basePos);
+      dp.mesh.position.x += (Math.random() - 0.5) * 0.14;
+      dp.mesh.position.y += Math.random() * 0.06;
+      dp.mesh.position.z += (Math.random() - 0.5) * 0.14;
+
+      var v = new THREE.Vector3(
+        (Math.random() - 0.5) * 0.65,
+        Math.random() * 0.85 + 0.35,
+        (Math.random() - 0.5) * 0.65
+      );
+      dp.vel.copy(v);
+      dp.mesh.visible = true;
+      spawned++;
+      if (spawned >= pCount) break;
     }
   }
 }
@@ -897,7 +942,7 @@ export function initCombat() {
   var pGeo = new THREE.BoxGeometry(0.08, 0.08, 0.08);
   var pMat = new THREE.MeshBasicMaterial({ color: 0x221c1a, transparent: true, opacity: 0.8 });
   for (var dpi = 0; dpi < 40; dpi++) {
-    var dpm = new THREE.Mesh(pGeo, pMat);
+    var dpm = new THREE.Mesh(pGeo, pMat.clone());
     dpm.visible = false;
     state.planetGroup.add(dpm);
     state.darkParticles.push({

@@ -74,6 +74,7 @@ export function initAudioSystem() {
   }
 
   state.audioCtx = audioCtx;
+  state.attenuateAmbience = attenuateAmbience;
 
   // Carrega preferência de mudo salva
   try {
@@ -209,6 +210,15 @@ export const startMusic = startAmbience;
 export const stopMusic = stopAmbience;
 
 // Atualização suave da ambiência de vento (sem música)
+export function attenuateAmbience(isPaused) {
+  if (!audioCtx || !isAmbienceRunning || !ambientGain) return;
+  var now = audioCtx.currentTime;
+  var isNight = (state.dayNightPhase === "night" || state.dayNightPhase === "sunset");
+  var baseVol = isNight ? AMBIENT_NIGHT_VOLUME : AMBIENT_DAY_VOLUME;
+  var targetVol = isPaused ? (baseVol * 0.22) : baseVol;
+  ambientGain.gain.setTargetAtTime(Math.max(0.0001, targetVol), now, 0.15);
+}
+
 export function updateAudio(dt) {
   if (!audioCtx || !isAmbienceRunning || !ambientGain || !ambientFilter) return;
 
@@ -218,6 +228,9 @@ export function updateAudio(dt) {
   // Modulação lenta de volume para simular rajadas suaves de brisa sem soar estático
   var slowLfo = Math.sin(now * 0.22) * 0.004 + Math.cos(now * 0.09) * 0.002;
   var baseVol = isNight ? AMBIENT_NIGHT_VOLUME : AMBIENT_DAY_VOLUME;
+  if (state.isPaused) {
+    baseVol *= 0.22;
+  }
   var targetVol = Math.max(0.001, baseVol + slowLfo);
   ambientGain.gain.setTargetAtTime(targetVol, now, 0.8);
 

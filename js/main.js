@@ -382,6 +382,7 @@ export function resetGame() {
   // 11. Esconde qualquer modal aberto
   hideGameOverModal();
   hideStartScreen();
+  if (state.ui && state.ui.hidePauseModal) state.ui.hidePauseModal();
   var lvlModal = document.getElementById("levelup-modal");
   if (lvlModal) lvlModal.style.display = "none";
   var skillModal = document.getElementById("skills-tree-modal");

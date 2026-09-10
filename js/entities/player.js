@@ -6,6 +6,8 @@
 import {
   PLANET_BASE_RADIUS,
   SEA_LEVEL,
+  WATER_SPEED_FACTOR,
+  WATER_SINK_OFFSET,
   MAX_FORWARD_SPEED,
   MAX_TURN_SPEED,
   CAM_YAW_LERP_FACTOR,
@@ -35,7 +37,8 @@ import {
   CAM_PITCH_DEFAULT
 } from "../config.js";
 import { state } from "../state.js";
-import { getRawElevation } from "../core/math.js";
+import { getRawElevation, getStepIndex } from "../core/math.js";
+import { triggerWaterSplash } from "../systems/combat.js";
 
 // Vetores e Quaternions reutilizáveis para evitar alocações de lixo por frame
 var upVec = new THREE.Vector3(0, 1, 0);
@@ -668,10 +671,25 @@ export function updatePlayer(dt) {
   }
   state.playerStationaryTime = state.playerStationaryTimer;
 
+  // Posição direcional atual no planeta para verificação de terreno
+  invPlanetQuat.copy(state.planetQuat).invert();
+  curLocalDir.set(0, 1, 0).applyQuaternion(invPlanetQuat).normalize();
+  state.playerLocalDir.copy(curLocalDir);
+
+  // Verificação de água (nível do mar)
+  var isPlayerInWater = (getStepIndex(curLocalDir) < 0);
+  state.isPlayerInWater = isPlayerInWater;
+
+  if (isPlayerInWater && !state.wasPlayerInWater) {
+    triggerWaterSplash(curLocalDir, 5);
+  }
+  state.wasPlayerInWater = isPlayerInWater;
+
   // =========================================================================
   // SISTEMA DE STAMINA E CORRIDA (Substitui o Dash)
+  // Na água, a corrida é impedida e o gasto de estamina fica suspenso
   // =========================================================================
-  var wantsToSprint = isMoving && (joyMag >= SPRINT_THRESHOLD);
+  var wantsToSprint = isMoving && (joyMag >= SPRINT_THRESHOLD) && !isPlayerInWater;
 
   if (wantsToSprint && !state.isStaminaExhausted && !state.isGameOver) {
     state.isSprinting = true;
@@ -686,6 +704,7 @@ export function updatePlayer(dt) {
     }
   } else {
     state.isSprinting = false;
+    // O gasto de estamina fica suspenso (sem consumo), e a regeneração segue seu ciclo natural
     if (state.staminaRegenDelayTimer > 0) {
       state.staminaRegenDelayTimer = Math.max(0, state.staminaRegenDelayTimer - dt);
     } else {
@@ -709,13 +728,10 @@ export function updatePlayer(dt) {
 
   var sprintSpeedMul = state.isSprinting ? SPRINT_SPEED_MULTIPLIER : 1.0;
   var moveSpeedUpgradeMul = 1 + (state.upgrades?.moveSpeed?.level || 0) * 0.15;
-  var targetVel = isMoving ? Math.min(1.0, joyMag) * MAX_FORWARD_SPEED * moveSpeedUpgradeMul * sprintSpeedMul : 0;
+  var waterSpeedMul = isPlayerInWater ? WATER_SPEED_FACTOR : 1.0;
+  var targetVel = isMoving ? Math.min(1.0, joyMag) * MAX_FORWARD_SPEED * moveSpeedUpgradeMul * sprintSpeedMul * waterSpeedMul : 0;
 
   state.currentForwardVel += (targetVel - state.currentForwardVel) * (state.isSprinting ? 0.25 : 0.15);
-
-  invPlanetQuat.copy(state.planetQuat).invert();
-  curLocalDir.set(0, 1, 0).applyQuaternion(invPlanetQuat).normalize();
-  state.playerLocalDir.copy(curLocalDir);
 
   var moveAngle = state.currentForwardVel * dt;
   if (Math.abs(moveAngle) > 0.000001 && moveDir.lengthSq() > 0.0001 && !state.isGameOver) {
@@ -749,11 +765,6 @@ export function updatePlayer(dt) {
       }
     }
 
-    var rawElev = getRawElevation(resolvedLocalDir);
-    if (rawElev < SEA_LEVEL) {
-      resolvedLocalDir.copy(curLocalDir);
-    }
-
     worldPtVec.copy(resolvedLocalDir).applyQuaternion(state.planetQuat);
     alignQuat.setFromUnitVectors(worldPtVec, upVec);
     state.planetQuat.premultiply(alignQuat);
@@ -771,7 +782,13 @@ export function updatePlayer(dt) {
     state.targetGroundY = charHits[0].point.y;
   }
   state.currentGroundY += (state.targetGroundY - state.currentGroundY) * 0.25;
-  state.characterGroup.position.set(0, state.currentGroundY, 0);
+
+  // Retorno visual: afundamento vertical suave ao entrar na água
+  var targetWaterSink = isPlayerInWater ? WATER_SINK_OFFSET : 0;
+  state.waterSinkOffset = state.waterSinkOffset || 0;
+  state.waterSinkOffset += (targetWaterSink - state.waterSinkOffset) * 0.18;
+
+  state.characterGroup.position.set(0, state.currentGroundY - state.waterSinkOffset, 0);
 
   // =========================================================================
   // PASSO 2: DEPOIS DEFINA faceDir
@@ -874,7 +891,18 @@ export function updatePlayer(dt) {
     if (state.isSprinting) strideAmplitude *= 1.15;
     strideAmplitude = Math.max(0.30, Math.min(0.75, strideAmplitude));
 
+    var prevWalkCycle = state.walkCycle || 0;
     state.walkCycle += walkDirSign * dt * (speedMag / MAX_FORWARD_SPEED) * 16.0;
+
+    // Retorno visual: a cada passo na água surge um respingo discreto com cor clara
+    if (state.isPlayerInWater) {
+      var prevStep = Math.floor(prevWalkCycle / Math.PI);
+      var curStep = Math.floor(state.walkCycle / Math.PI);
+      if (prevStep !== curStep) {
+        triggerWaterSplash(state.playerLocalDir, 3);
+      }
+    }
+
     state.charLegLeft.rotation.x = Math.sin(state.walkCycle) * strideAmplitude;
     state.charLegRight.rotation.x = -Math.sin(state.walkCycle) * strideAmplitude;
     state.charArmLeft.rotation.x = -Math.sin(state.walkCycle) * 0.45;

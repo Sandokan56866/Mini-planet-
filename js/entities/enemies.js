@@ -5,9 +5,16 @@
 import {
   PLANET_BASE_RADIUS,
   SEA_LEVEL,
+  WATER_SPEED_FACTOR,
   MAX_ZOMBIES,
   INITIAL_ZOMBIES_COUNT,
   ZOMBIE_ATTACK_RADIUS,
+  ZOMBIE_ATTACK_INTERVAL,
+  ZOMBIE_ATTACK_WINDUP_DURATION,
+  ZOMBIE_ATTACK_INTERVALS,
+  ZOMBIE_ATTACK_WINDUP_DURATIONS,
+  getZombieAttackInterval,
+  getZombieAttackWindup,
   ZOMBIE_DIE_DURATION,
   ZOMBIE_BASE_SPEED,
   ZOMBIE_SPEED_RATIOS,
@@ -64,7 +71,8 @@ import {
   ZOMBIE_SAFE_SPAWN_ATTEMPTS
 } from "../config.js";
 import { state } from "../state.js";
-import { getRawElevation, radiusAt } from "../core/math.js";
+import { getRawElevation, radiusAt, getStepIndex } from "../core/math.js";
+import { triggerWaterSplash } from "../systems/combat.js";
 
 // Vetores temporários reutilizáveis para orientação e física sem alocação de memória
 var upVec = new THREE.Vector3(0, 1, 0);
@@ -755,6 +763,12 @@ function createZombieMesh(type) {
     isScreaming: false,
     screamTimer: 0,
     speedBoostTimer: 0,
+    // Comportamento de Ataque por Contato (Ciclo com Ritmo: Windup -> Dano -> Recuperação)
+    attackCooldown: 1.1,
+    attackInterval: 1.1,
+    attackWindupDuration: 0.35,
+    attackPhase: "ready", // "ready" | "windup" | "recovery"
+    attackWindupTimer: 0,
     // Comportamento do Carniceiro
     chargeState: "stalk",
     chargeTimer: 0,
@@ -1337,6 +1351,13 @@ function spawnSingleZombie(candidateDir, targetType, isBoss, typeOverride) {
   }
 
   freeZombie.speed = freeZombie.baseSpeed;
+  var atkInterval = getZombieAttackInterval(targetType, freeZombie.bossSubtype);
+  var atkWindup = getZombieAttackWindup(targetType, freeZombie.bossSubtype);
+  freeZombie.attackInterval = atkInterval;
+  freeZombie.attackCooldown = atkInterval; // Começa pronto para desferir ataque ao tocar o sobrevivente
+  freeZombie.attackWindupDuration = atkWindup;
+  freeZombie.attackPhase = "ready";
+  freeZombie.attackWindupTimer = 0;
   freeZombie.mesh.visible = true;
   freeZombie.mesh.scale.set(freeZombie.baseScale, freeZombie.baseScale, freeZombie.baseScale);
   freeZombie.mesh.position.copy(candidateDir).multiplyScalar(freeZombie.surfaceRadius);
@@ -1453,7 +1474,8 @@ export function updateEnemies(dt) {
       if (shouldSkipAnim) {
         zAxis.crossVectors(z.dirLocal, state.playerLocalDir).normalize();
         if (zAxis.lengthSq() > 0.0001) {
-          zCandDir.copy(z.dirLocal).applyAxisAngle(zAxis, z.speed * dt).normalize();
+          var zWaterSpeedMulSkip = (getStepIndex(z.dirLocal) < 0) ? WATER_SPEED_FACTOR : 1.0;
+          zCandDir.copy(z.dirLocal).applyAxisAngle(zAxis, z.speed * zWaterSpeedMulSkip * dt).normalize();
           var resolvedDir = resolveZombieMove(z, z.dirLocal, zCandDir);
           z.dirLocal.copy(resolvedDir);
         }
@@ -1466,6 +1488,111 @@ export function updateEnemies(dt) {
     }
 
     var angToPlayer = Math.acos(Math.max(-1, Math.min(1, pDot)));
+
+    // ========================================================
+    // COOLDOWN E CICLO RÍTMICO DE ATAQUE POR CONTATO CORPORAL
+    // ========================================================
+    if (z.attackInterval === undefined) {
+      z.attackInterval = getZombieAttackInterval(z.type, z.bossSubtype);
+    }
+    if (z.attackWindupDuration === undefined) {
+      z.attackWindupDuration = getZombieAttackWindup(z.type, z.bossSubtype);
+    }
+    if (z.attackCooldown === undefined) {
+      z.attackCooldown = z.attackInterval;
+    }
+    if (z.attackPhase === undefined) {
+      z.attackPhase = "ready";
+    }
+    if (z.attackWindupTimer === undefined) {
+      z.attackWindupTimer = 0;
+    }
+
+    // 1. Cooldown por zumbi: recarrega ao longo de ZOMBIE_ATTACK_INTERVAL (ou específico por tipo)
+    if (z.attackCooldown < z.attackInterval) {
+      z.attackCooldown = Math.min(z.attackInterval, z.attackCooldown + dt);
+    }
+
+    var isAttackingStationary = false;
+    var effectiveAttackRadius = ZOMBIE_ATTACK_RADIUS;
+    if (z.type === "boss") {
+      effectiveAttackRadius = (z.bossSubtype === "butcher") ? 0.042 : 0.038;
+    } else if (z.type === "tank") {
+      effectiveAttackRadius = 0.028;
+    }
+
+    if (!state.isGameOver) {
+      if (z.attackPhase === "windup") {
+        // Fase 1: Antecipação visível (Windup ~0.35s). Durante o windup o zumbi não se move
+        isAttackingStationary = true;
+        z.attackWindupTimer -= dt;
+
+        if (z.attackWindupTimer <= 0) {
+          // Fase 2: Ao fim do windup o dano é aplicado
+          // Janela de reação: se o jogador conseguiu sair do alcance durante o windup, o golpe erra
+          var hitReach = effectiveAttackRadius * 1.35;
+          if (angToPlayer <= hitReach) {
+            var zDmg = 10;
+            if (z.type === "boss") {
+              zDmg = (z.bossSubtype === "butcher") ? 32 : 25;
+            } else if (z.type === "tank") {
+              zDmg = 16;
+            } else if (z.type === "swarm") {
+              zDmg = 6;
+            } else if (z.type === "spitter") {
+              zDmg = 12;
+            } else if (z.type === "crawler") {
+              zDmg = 14;
+            } else if (z.type === "armored") {
+              zDmg = 15;
+            } else if (z.type === "screamer") {
+              zDmg = 8;
+            }
+
+            state.playerHp -= zDmg;
+            state.ui.triggerDamageFlash?.();
+            state.camShake += 0.04;
+            state.sounds.playZombieHitPlayerSound?.();
+            state.ui.updateHpUI?.();
+
+            if (state.playerHp <= 0) {
+              state.isGameOver = true;
+              state.ui.showGameOverModal?.();
+            }
+          }
+
+          // Fase 3: Ao atacar, o cooldown é zerado e inicia a recuperação
+          z.attackCooldown = 0;
+          z.attackPhase = "recovery";
+        }
+      } else if (z.attackPhase === "recovery") {
+        // Durante a recuperação até o cooldown terminar, o zumbi não se move
+        isAttackingStationary = true;
+
+        if (z.attackCooldown >= z.attackInterval) {
+          // Cooldown terminou de recarregar
+          if (angToPlayer < effectiveAttackRadius) {
+            // Continua encostado: repete o ciclo entrando em novo windup
+            z.attackPhase = "windup";
+            z.attackWindupTimer = z.attackWindupDuration;
+          } else {
+            // Jogador se afastou: retoma perseguição normal
+            z.attackPhase = "ready";
+            isAttackingStationary = false;
+          }
+        }
+      } else {
+        // Fase Pronta: ao entrar no alcance (< ZOMBIE_ATTACK_RADIUS), para e entra em windup
+        // Sem cooldown disponível, nenhum dano é aplicado
+        if (angToPlayer < effectiveAttackRadius && z.attackCooldown >= z.attackInterval) {
+          z.attackPhase = "windup";
+          z.attackWindupTimer = z.attackWindupDuration;
+          isAttackingStationary = true;
+        }
+      }
+    } else {
+      z.attackPhase = "ready";
+    }
 
     // ========================================================
     // COMPORTAMENTOS ESPECÍFICOS DE CADA INIMIGO
@@ -1599,41 +1726,89 @@ export function updateEnemies(dt) {
     }
 
     // ========================================================
-    // ANIMAÇÃO PROCEDURAL DE CAMINHADA
+    // ANIMAÇÃO PROCEDURAL (CAMINHADA OU ATAQUE COM RITMO)
+    // Aplica WATER_SPEED_FACTOR na água para terreno tático equilibrado
     // ========================================================
-    var effectiveSpeed = z.speed;
+    var isZombieInWater = getStepIndex(z.dirLocal) < 0;
+    var zWaterSpeedMul = isZombieInWater ? WATER_SPEED_FACTOR : 1.0;
+
+    var effectiveSpeed = z.speed * zWaterSpeedMul;
     if (isButcherCharging) {
-      effectiveSpeed = z.baseSpeed * BUTCHER_CHARGE_SPEED_MULTIPLIER;
+      effectiveSpeed = z.baseSpeed * BUTCHER_CHARGE_SPEED_MULTIPLIER * zWaterSpeedMul;
+    }
+    if (isAttackingStationary) {
+      effectiveSpeed = 0;
     }
 
-    var distTraveled = effectiveSpeed * PLANET_BASE_RADIUS * dt;
-    var strideLen = (ZOMBIE_WALK_CONFIG.strideLength && ZOMBIE_WALK_CONFIG.strideLength[z.type]) || 0.26;
-    z.walkPhase += (distTraveled / strideLen) * (Math.PI * 2);
+    if (isAttackingStationary) {
+      // Durante windup e recuperação o zumbi não se move e mantém pernas firmes
+      z.legL.rotation.x = THREE.MathUtils.lerp(z.legL.rotation.x, 0, 0.25);
+      z.legR.rotation.x = THREE.MathUtils.lerp(z.legR.rotation.x, 0, 0.25);
 
-    var phase = z.walkPhase + z.phaseOffset;
-    var speedRatio = Math.min(2.5, effectiveSpeed / ZOMBIE_BASE_SPEED);
-
-    if (z.type === "crawler") {
-      // Rastejante: corpo colado ao solo, ondulação sinuosa lateral
-      z.torso.position.y = 0.07 + Math.sin(phase) * 0.02;
-      z.torso.rotation.y = Math.sin(phase) * 0.35;
-      z.armL.rotation.y = Math.sin(phase) * 0.45;
-      z.armR.rotation.y = -Math.sin(phase) * 0.45;
-      z.legL.rotation.y = -Math.sin(phase) * 0.40;
-      z.legR.rotation.y = Math.sin(phase) * 0.40;
+      if (z.attackPhase === "windup") {
+        // Antecipação visível: ergue os braços acima da cabeça preparando o golpe
+        var windupT = 1.0 - Math.max(0, z.attackWindupTimer / Math.max(0.01, z.attackWindupDuration));
+        var raiseAngle = -Math.PI * 0.5 - windupT * 1.15; // De horizontal (-1.57) até alto (~-2.72)
+        z.armL.rotation.x = raiseAngle;
+        z.armR.rotation.x = raiseAngle;
+        z.armL.rotation.z = 0.25 * windupT;
+        z.armR.rotation.z = -0.25 * windupT;
+        z.torso.position.y = (z.type === "crawler" ? 0.12 : 0.29) + windupT * 0.04;
+        z.torso.rotation.x = -0.15 * windupT;
+        z.head.rotation.x = -0.15 * windupT;
+      } else if (z.attackPhase === "recovery") {
+        // Recuperação pós-ataque: braços descem no golpe e retornam gradualmente à postura inicial
+        var recProgress = Math.min(1.0, z.attackCooldown / Math.max(0.01, z.attackInterval * 0.45));
+        var recAngle = THREE.MathUtils.lerp(-0.35, -Math.PI * 0.5, recProgress);
+        z.armL.rotation.x = recAngle;
+        z.armR.rotation.x = recAngle;
+        z.armL.rotation.z = THREE.MathUtils.lerp(0.18, 0, recProgress);
+        z.armR.rotation.z = THREE.MathUtils.lerp(-0.18, 0, recProgress);
+        z.torso.position.y = THREE.MathUtils.lerp(0.26, (z.type === "crawler" ? 0.07 : 0.29), recProgress);
+        z.torso.rotation.x = THREE.MathUtils.lerp(0.10, 0, recProgress);
+        z.head.rotation.x = THREE.MathUtils.lerp(0.10, 0, recProgress);
+      }
     } else {
-      z.legL.rotation.x = Math.sin(phase) * (ZOMBIE_WALK_CONFIG.legAmplitude * speedRatio);
-      z.legR.rotation.x = -Math.sin(phase) * (ZOMBIE_WALK_CONFIG.legAmplitude * speedRatio);
+      var distTraveled = effectiveSpeed * PLANET_BASE_RADIUS * dt;
+      var strideLen = (ZOMBIE_WALK_CONFIG.strideLength && ZOMBIE_WALK_CONFIG.strideLength[z.type]) || 0.26;
+      var prevWalkPhase = z.walkPhase;
+      z.walkPhase += (distTraveled / strideLen) * (Math.PI * 2);
 
-      z.armL.rotation.x = -Math.PI / 2 + Math.sin(phase * 0.95) * (ZOMBIE_WALK_CONFIG.armSwingBase * speedRatio);
-      z.armR.rotation.x = -Math.PI / 2 - Math.sin(phase * 1.05 + 0.35) * (ZOMBIE_WALK_CONFIG.armSwingBase * speedRatio);
-      z.torso.position.y = 0.29 + Math.abs(Math.sin(phase)) * (ZOMBIE_WALK_CONFIG.bobAmplitude * speedRatio);
+      // Efeito de respingo d'água ao caminhar na água
+      if (isZombieInWater && effectiveSpeed > 0.01) {
+        var prevStep = Math.floor(prevWalkPhase / Math.PI);
+        var curStep = Math.floor(z.walkPhase / Math.PI);
+        if (prevStep !== curStep && ((state.frameCount + z.frameOffset) % 2 === 0)) {
+          triggerWaterSplash(z.dirLocal, 2);
+        }
+      }
+
+      var phase = z.walkPhase + z.phaseOffset;
+      var speedRatio = Math.min(2.5, effectiveSpeed / ZOMBIE_BASE_SPEED);
+
+      if (z.type === "crawler") {
+        // Rastejante: corpo colado ao solo, ondulação sinuosa lateral
+        z.torso.position.y = 0.07 + Math.sin(phase) * 0.02;
+        z.torso.rotation.y = Math.sin(phase) * 0.35;
+        z.armL.rotation.y = Math.sin(phase) * 0.45;
+        z.armR.rotation.y = -Math.sin(phase) * 0.45;
+        z.legL.rotation.y = -Math.sin(phase) * 0.40;
+        z.legR.rotation.y = Math.sin(phase) * 0.40;
+      } else {
+        z.legL.rotation.x = Math.sin(phase) * (ZOMBIE_WALK_CONFIG.legAmplitude * speedRatio);
+        z.legR.rotation.x = -Math.sin(phase) * (ZOMBIE_WALK_CONFIG.legAmplitude * speedRatio);
+
+        z.armL.rotation.x = -Math.PI / 2 + Math.sin(phase * 0.95) * (ZOMBIE_WALK_CONFIG.armSwingBase * speedRatio);
+        z.armR.rotation.x = -Math.PI / 2 - Math.sin(phase * 1.05 + 0.35) * (ZOMBIE_WALK_CONFIG.armSwingBase * speedRatio);
+        z.torso.position.y = 0.29 + Math.abs(Math.sin(phase)) * (ZOMBIE_WALK_CONFIG.bobAmplitude * speedRatio);
+        z.torso.rotation.x = 0;
+      }
     }
 
     // ========================================================
     // DESLOCAMENTO NA ESFERA
     // ========================================================
-    if (!isSpitterHolding) {
+    if (!isSpitterHolding && !isAttackingStationary) {
       if (isButcherCharging && z.chargeTravelAxis.lengthSq() > 0.001) {
         // Ponto 2: Investida do Carniceiro (com exceção de atropelar pequenos obstáculos tratada em resolveZombieMove)
         zCandDir.copy(z.dirLocal).applyAxisAngle(z.chargeTravelAxis, effectiveSpeed * dt).normalize();
@@ -1680,7 +1855,7 @@ export function updateEnemies(dt) {
     z.lastDirSample.copy(z.dirLocal);
 
     // Destravamento por inatividade ao longo de 2,5 segundos
-    var isIntentionallyStationary = isSpitterHolding || z.isScreaming ||
+    var isIntentionallyStationary = isSpitterHolding || z.isScreaming || isAttackingStationary ||
       (z.type === "boss" && z.bossSubtype === "butcher" && (z.chargeState === "windup" || z.chargeState === "rest"));
 
     if (isIntentionallyStationary) {
@@ -1707,39 +1882,6 @@ export function updateEnemies(dt) {
         z.accumTravelAngle = 0;
         z.stuckTimer = 0;
       }
-    }
-
-    // ========================================================
-    // DANO POR CONTATO CORPORAL COM O SOBREVIVENTE
-    // ========================================================
-    if (angToPlayer < ZOMBIE_ATTACK_RADIUS && !state.isGameOver) {
-      var zDmg = 10;
-      if (z.type === "boss") {
-        zDmg = (z.bossSubtype === "butcher") ? 32 : 25;
-      } else if (z.type === "tank") {
-        zDmg = 16;
-      } else if (z.type === "swarm") {
-        zDmg = 6;
-      } else if (z.type === "spitter") {
-        zDmg = 12;
-      }
-
-      state.playerHp -= zDmg;
-      state.ui.triggerDamageFlash?.();
-      state.camShake += 0.04;
-      state.sounds.playZombieHitPlayerSound?.();
-      state.ui.updateHpUI?.();
-
-      if (state.playerHp <= 0) {
-        state.isGameOver = true;
-        state.ui.showGameOverModal?.();
-      }
-
-      // Ponto 4: Repulsão de desempilhamento pós-ataque
-      zCandDir.copy(z.dirLocal).applyAxisAngle(zAxis, -0.04).normalize();
-      var resolvedRepulsion = resolveZombieMove(z, z.dirLocal, zCandDir, true);
-      z.dirLocal.copy(resolvedRepulsion);
-      z.mesh.position.copy(z.dirLocal).multiplyScalar(z.surfaceRadius);
     }
   }
 

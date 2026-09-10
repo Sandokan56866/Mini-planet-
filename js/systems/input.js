@@ -30,9 +30,16 @@ export function initInput() {
   state.targetCamDistance = CAM_FIXED_DISTANCE;
   state.currentCamDistance = CAM_FIXED_DISTANCE;
 
-  // Teclado (WASD / Setas + Shift para correr, B para lançar Bomba)
+  // Teclado (WASD / Setas + Shift para correr, B para lançar Bomba, Esc/P para Pausar)
   window.addEventListener("keydown", function (e) {
     state.keys[e.code] = true;
+
+    // Pausar / Despausar com Esc ou P
+    if ((e.code === "Escape" || e.code === "KeyP") && !e.repeat) {
+      if (state.ui && state.ui.togglePauseGame) {
+        state.ui.togglePauseGame();
+      }
+    }
 
     if (e.code === "KeyB" && !e.repeat) {
       if (state.combat && state.combat.triggerBomb) {
@@ -54,6 +61,9 @@ export function initInput() {
         if (e) {
           e.preventDefault();
           e.stopPropagation();
+        }
+        if (state.isPaused || state.isGameOver || state.isLevelUpPaused || !state.gameStarted) {
+          return;
         }
         if (state.combat && state.combat.triggerBomb) {
           state.combat.triggerBomb();
@@ -94,6 +104,7 @@ export function initInput() {
 // 2. CONTROLE DO JOYSTICK VIRTUAL
 // ==========================================
 function onJoyTouchStart(e) {
+  if (state.isPaused || state.isGameOver || state.isLevelUpPaused || !state.gameStarted) return;
   if (state.joyTouchId !== null) return;
   var touch = e.changedTouches[0];
   state.joyTouchId = touch.identifier;
@@ -111,6 +122,16 @@ function onJoyTouchStart(e) {
 
 function onJoyTouchMove(e) {
   if (state.joyTouchId === null) return;
+  if (state.isPaused || state.isGameOver || state.isLevelUpPaused || !state.gameStarted) {
+    state.joyTouchId = null;
+    state.isJoystickActive = false;
+    state.joyX = 0;
+    state.joyY = 0;
+    if (joystickKnob) {
+      joystickKnob.style.transform = "translate(0px, 0px)";
+    }
+    return;
+  }
   for (var i = 0; i < e.changedTouches.length; i++) {
     if (e.changedTouches[i].identifier === state.joyTouchId) {
       handleJoyPosition(e.changedTouches[i].clientX, e.changedTouches[i].clientY);
@@ -167,6 +188,9 @@ function isInteractiveUI(target) {
   if (!target) return false;
   return target.closest("#joystick-area") ||
          target.closest("#btn-bomb") ||
+         target.closest("#pause-btn") ||
+         target.closest("#pause-modal") ||
+         target.closest(".pause-card") ||
          target.closest("#restart-btn") ||
          target.closest(".upgrade-card-btn") ||
          target.closest("#start-play-btn") ||
